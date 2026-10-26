@@ -1,5 +1,5 @@
 # IssueLift ProofBench Evaluation Report
-*Generated on:* `2026-10-26T07:30:33.324Z`
+*Generated on:* `2026-10-26T08:21:20.386Z`
 *Command Executed:* `npm run eval:proofbench`
 *Runner:* Deterministic Claim Gate Test Suite (Node.js)
 *API Key Required:* **None (100% offline reproducible)**

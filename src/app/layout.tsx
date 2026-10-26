@@ -28,20 +28,21 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{
             __html: `
               try {
-                const theme = localStorage.getItem('issuelift-theme') || 'dark';
-                if (theme === 'light') {
-                  document.documentElement.classList.remove('dark');
-                  document.documentElement.classList.add('light');
-                } else {
+                const stored = localStorage.getItem('issuelift-theme') || 'dark';
+                const isDark = stored === 'dark' || (stored === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+                if (isDark) {
                   document.documentElement.classList.add('dark');
                   document.documentElement.classList.remove('light');
+                } else {
+                  document.documentElement.classList.remove('dark');
+                  document.documentElement.classList.add('light');
                 }
               } catch (_) {}
             `,
           }}
         />
       </head>
-      <body className="bg-midnight-900 text-slate-100 antialiased selection:bg-violet-500 selection:text-white transition-colors duration-200">
+      <body className="bg-slate-50 dark:bg-midnight-950 text-slate-900 dark:text-slate-100 min-h-screen antialiased selection:bg-violet-500 selection:text-white transition-colors duration-200">
         {children}
       </body>
     </html>
