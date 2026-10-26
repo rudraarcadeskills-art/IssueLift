@@ -20,17 +20,19 @@ async function buildPresentation() {
   const pres = new pptxgen();
   pres.layout = 'LAYOUT_WIDE'; // 16:9 widescreen layout
 
-  // Brand color palette
-  const CANVAS = 'F7F6FF';
-  const INK = '17152D';
-  const INDIGO = '7057F5';
-  const BLUE = '477BFF';
-  const TEAL = '26C7C9';
-  const CORAL = 'FF7268';
-  const LIME = 'C9F27A';
+  // Brand color palette - Redesigned Midnight Developer Workspace
+  const CANVAS = '0B1020'; // Midnight Ink
+  const CARD_BG = '121A2B'; // Elevated midnight surface
+  const BORDER = '232F48'; // Subtle midnight border
+  const INK = 'F1F5F9'; // Readable off-white text
+  const INDIGO = 'A78BFA'; // Electric violet light
+  const BLUE = '60A5FA'; // Bright blue
+  const TEAL = '2DD4BF'; // Evidence teal
+  const CORAL = 'FB7185'; // Warning coral
+  const LIME = 'A7F3D0'; // Mint lime
   const WHITE = 'FFFFFF';
-  const GRAY_BG = 'ECEAF9';
-  const MUTED = '635F80';
+  const GRAY_BG = '1A2338';
+  const MUTED = '94A3B8';
 
   // -------------------------------------------------------------
   // SLIDE 1: Title & Executive Summary

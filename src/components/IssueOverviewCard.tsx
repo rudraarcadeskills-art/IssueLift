@@ -16,27 +16,27 @@ export function IssueOverviewCard({ contract }: IssueOverviewCardProps) {
     switch (verdict) {
       case 'ACTIONABLE':
         return {
-          bg: 'bg-verified-surface',
-          border: 'border-verified-border',
-          text: 'text-teal-900',
-          badge: 'bg-verified-teal text-white',
+          bg: 'bg-teal-950/60',
+          border: 'border-teal-500/40',
+          text: 'text-teal-200',
+          badge: 'bg-teal-500 text-midnight-950',
           icon: CheckCircle,
         };
       case 'CLARIFY FIRST':
         return {
-          bg: 'bg-caution-surface',
-          border: 'border-caution-border',
-          text: 'text-rose-950',
-          badge: 'bg-caution-coral text-white',
+          bg: 'bg-coral-950/60',
+          border: 'border-coral-500/40',
+          text: 'text-coral-200',
+          badge: 'bg-coral-500 text-white',
           icon: AlertTriangle,
         };
       case 'EVIDENCE-LIMITED':
       default:
         return {
-          bg: 'bg-amber-50',
-          border: 'border-amber-200',
-          text: 'text-amber-950',
-          badge: 'bg-amber-500 text-white',
+          bg: 'bg-amber-950/60',
+          border: 'border-amber-500/40',
+          text: 'text-amber-200',
+          badge: 'bg-amber-500 text-midnight-950',
           icon: ShieldAlert,
         };
     }
@@ -46,37 +46,37 @@ export function IssueOverviewCard({ contract }: IssueOverviewCardProps) {
   const VerdictIcon = style.icon;
 
   return (
-    <div className="w-full bg-white rounded-2xl border border-ink-border shadow-card p-6 sm:p-8 space-y-6">
+    <div className="w-full bg-midnight-800/90 border border-midnight-700 rounded-2xl shadow-card-dark p-5 sm:p-7 space-y-6">
       {/* Header row */}
-      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 pb-6 border-b border-ink-border/70">
+      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 pb-5 border-b border-midnight-700/80">
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <span
-              className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${
+              className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${
                 meta.state === 'open'
-                  ? 'bg-verified-surface text-teal-800 border border-verified-border'
-                  : 'bg-caution-surface text-caution-coral border border-caution-border'
+                  ? 'bg-teal-500/10 text-teal-300 border border-teal-500/30'
+                  : 'bg-coral-500/10 text-coral-300 border border-coral-500/30'
               }`}
             >
               {meta.state}
             </span>
-            <span className="text-xs text-ink-muted">
+            <span className="text-xs font-mono text-slate-400">
               {meta.owner}/{meta.repo} #{meta.number}
             </span>
-            <span className="text-xs text-ink-faint flex items-center gap-1">
+            <span className="text-xs text-slate-500 flex items-center gap-1">
               <Clock className="w-3.5 h-3.5" /> Checked {new Date(meta.checked_at).toLocaleTimeString()}
             </span>
           </div>
 
-          <h2 className="text-xl sm:text-2xl font-bold text-ink tracking-tight flex items-center gap-2">
+          <h2 className="text-lg sm:text-2xl font-bold text-slate-100 tracking-tight flex items-center gap-2">
             <a
               href={meta.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-electric-indigo transition-colors flex items-center gap-1.5"
+              className="hover:text-violet-300 transition-colors flex items-center gap-1.5"
             >
               <span>{meta.title}</span>
-              <ExternalLink className="w-4 h-4 text-ink-faint shrink-0" />
+              <ExternalLink className="w-4 h-4 text-slate-500 shrink-0" />
             </a>
           </h2>
         </div>
@@ -85,16 +85,16 @@ export function IssueOverviewCard({ contract }: IssueOverviewCardProps) {
         <div className={`p-4 rounded-xl border ${style.bg} ${style.border} ${style.text} max-w-sm shrink-0`}>
           <div className="flex items-center gap-2 mb-1.5">
             <VerdictIcon className="w-4 h-4 shrink-0" />
-            <span className="text-xs font-bold uppercase tracking-wider">Readiness Gate:</span>
-            <span className={`text-xs px-2 py-0.5 rounded font-bold ${style.badge}`}>
+            <span className="text-[11px] font-bold uppercase tracking-wider">Readiness Gate:</span>
+            <span className={`text-[11px] px-2 py-0.5 rounded font-bold ${style.badge}`}>
               {gate.verdict}
             </span>
           </div>
           <ul className="text-xs space-y-1 mt-2">
             {gate.reasons.map((reason, i) => (
-              <li key={i} className="flex items-start gap-1.5">
-                <span className="text-ink-faint">•</span>
-                <span>{reason}</span>
+              <li key={i} className="flex items-start gap-1.5 leading-snug">
+                <span className="text-slate-500">•</span>
+                <span className="text-slate-300">{reason}</span>
               </li>
             ))}
           </ul>
@@ -102,24 +102,24 @@ export function IssueOverviewCard({ contract }: IssueOverviewCardProps) {
       </div>
 
       {/* Meta tags and signals */}
-      <div className="flex flex-wrap items-center gap-4 text-xs text-ink-muted">
+      <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400">
         <div className="flex items-center gap-1.5">
-          <User className="w-3.5 h-3.5 text-ink-faint" />
+          <User className="w-3.5 h-3.5 text-slate-500" />
           <span>Author:</span>
           <a
             href={meta.author.html_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="font-medium text-ink hover:text-electric-indigo"
+            className="font-medium text-slate-200 hover:text-violet-300"
           >
             @{meta.author.login}
           </a>
         </div>
 
         <div className="flex items-center gap-1.5">
-          <User className="w-3.5 h-3.5 text-ink-faint" />
+          <User className="w-3.5 h-3.5 text-slate-500" />
           <span>Assignee:</span>
-          <span className="font-medium text-ink">
+          <span className="font-medium text-slate-200">
             {meta.assignees.length > 0
               ? meta.assignees.map((a) => `@${a.login}`).join(', ')
               : 'Unassigned'}
@@ -127,18 +127,18 @@ export function IssueOverviewCard({ contract }: IssueOverviewCardProps) {
         </div>
 
         <div className="flex items-center gap-1.5">
-          <GitBranch className="w-3.5 h-3.5 text-ink-faint" />
+          <GitBranch className="w-3.5 h-3.5 text-slate-500" />
           <span>Branch:</span>
-          <span className="font-mono text-ink font-medium">{meta.default_branch}</span>
+          <span className="font-mono text-slate-200 font-medium">{meta.default_branch}</span>
         </div>
 
         {meta.labels.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
-            <Tag className="w-3.5 h-3.5 text-ink-faint" />
+            <Tag className="w-3.5 h-3.5 text-slate-500" />
             {meta.labels.map((l) => (
               <span
                 key={l.name}
-                className="px-2 py-0.5 rounded-full text-[11px] bg-canvas-subtle border border-ink-border text-ink-soft"
+                className="px-2 py-0.5 rounded-full text-[11px] bg-midnight-900 border border-midnight-700 text-slate-300"
               >
                 {l.name}
               </span>
@@ -148,19 +148,19 @@ export function IssueOverviewCard({ contract }: IssueOverviewCardProps) {
       </div>
 
       {/* Executive Summary & Expected Outcome */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-        <div className="p-4 rounded-xl bg-canvas-subtle border border-ink-border/80">
-          <h4 className="text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1.5">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+        <div className="p-4 rounded-xl bg-midnight-900/60 border border-midnight-700/80">
+          <h4 className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
             Issue Summary
           </h4>
-          <p className="text-sm text-ink-soft leading-relaxed">{contract.issue_summary}</p>
+          <p className="text-xs sm:text-sm text-slate-200 leading-relaxed">{contract.issue_summary}</p>
         </div>
 
-        <div className="p-4 rounded-xl bg-canvas-subtle border border-ink-border/80">
-          <h4 className="text-xs font-semibold text-ink-muted uppercase tracking-wider mb-1.5">
+        <div className="p-4 rounded-xl bg-midnight-900/60 border border-midnight-700/80">
+          <h4 className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
             Expected Outcome (Definition of Done)
           </h4>
-          <p className="text-sm text-ink-soft leading-relaxed">{contract.expected_outcome}</p>
+          <p className="text-xs sm:text-sm text-slate-200 leading-relaxed">{contract.expected_outcome}</p>
         </div>
       </div>
     </div>

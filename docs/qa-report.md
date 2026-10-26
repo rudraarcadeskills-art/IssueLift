@@ -10,18 +10,19 @@
 
 | Check Category | Command Executed | Observed Result | Status |
 | :--- | :--- | :--- | :---: |
+| **Visual Bug Fix** | CSS background shorthand audit | Removed overlapping rectangle; verified text clipping & gradients | ✅ **PASS** |
+| **Workspace Redesign** | App Shell & View Navigation | Scanner, Workspace, ProofBench, Playbook tabs + Light/Dark/System toggle | ✅ **PASS** |
 | **Static Build** | `npm run build` | Next.js 15.5 compiled all 5 App Router routes with 0 errors | ✅ **PASS** |
 | **Type Check** | `tsc --noEmit` | Clean compilation, zero TypeScript errors | ✅ **PASS** |
 | **Unit Test Suite** | `npm test` (`vitest run`) | 10/10 unit tests passed across 2 test suites | ✅ **PASS** |
 | **ProofBench Suite** | `npm run eval:proofbench` | 7/7 deterministic guardrail fixtures passed | ✅ **PASS** |
-| **Health Endpoint** | `GET /api/health` | Returns app readiness & engine status without secret leaks | ✅ **PASS** |
+| **Health Endpoint** | `GET /api/health` | Returns app readiness & Gemma 4 live status without secret leaks | ✅ **PASS** |
 | **Live GitHub Intake** | `POST /api/analyze` (React #1000) | Live GitHub REST fetch, tree inspection, and contract compile | ✅ **PASS** |
+| **Live Gemma 4 Engine** | Official `@google/genai` call | Real inference on `gemma-4-26b-a4b-it` succeeded; schema verified | ✅ **PASS** |
 | **Deterministic Claim Gate**| In-memory invariant check | Blocked hallucinated paths; demoted nonexistent files | ✅ **PASS** |
 | **TraceMap & Radar** | In-memory chain builder | Generates 4-node chains; honest bounded scan phrasing | ✅ **PASS** |
 | **Proof Bundle Export** | Client-side export generator | Markdown and JSON exports match on-screen contract exactly | ✅ **PASS** |
-| **Missing-Key State** | Graceful fallback verification | Shows setup guidance; baseline compiler operates cleanly | ✅ **PASS** |
-| **Live Gemma 4 Call** | `@google/genai` real model | Unconfigured locally (GEMMA_API_KEY absent) | ⚠️ **BLOCKED** |
-| **Public Vercel Deploy** | Production cloud host | Awaiting user deployment authorization & secret entry | ⚠️ **PREPARED** |
+| **Deck Generation** | `npm run generate:pptx` | 8 widescreen slides matching dark theme palette | ✅ **PASS** |
 
 ---
 

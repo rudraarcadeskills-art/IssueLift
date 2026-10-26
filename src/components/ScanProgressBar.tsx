@@ -50,17 +50,17 @@ export function ScanProgressBar({ currentStage }: ScanProgressBarProps) {
   };
 
   return (
-    <div className="w-full max-w-4xl mx-auto my-8 p-6 rounded-2xl glass-panel shadow-card border border-ink-border">
+    <div className="w-full max-w-4xl mx-auto my-6 p-5 sm:p-6 rounded-2xl bg-midnight-800/90 border border-midnight-700 shadow-card-dark">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-ink-muted">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
           Autonomous Analysis Pipeline
         </h3>
-        <span className="text-xs font-mono font-medium text-electric-indigo bg-electric-indigo/10 px-2.5 py-0.5 rounded-full">
+        <span className="text-[11px] font-mono font-medium text-violet-300 bg-violet-500/10 border border-violet-500/20 px-2.5 py-0.5 rounded-full">
           {currentStage === 'complete' ? 'Analysis Verified' : 'Executing Scan...'}
         </span>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {stages.map((stage) => {
           const status = getStageStatus(stage.id);
           const Icon = stage.icon;
@@ -70,27 +70,27 @@ export function ScanProgressBar({ currentStage }: ScanProgressBarProps) {
               key={stage.id}
               className={`p-3.5 rounded-xl border transition-all ${
                 status === 'complete'
-                  ? 'bg-verified-surface/60 border-verified-border text-teal-900'
+                  ? 'bg-teal-950/40 border-teal-500/40 text-teal-300'
                   : status === 'active'
-                  ? 'bg-white border-electric-indigo shadow-md shadow-electric-indigo/10 text-ink ring-2 ring-electric-indigo/20'
-                  : 'bg-white/40 border-ink-border/50 text-ink-muted opacity-60'
+                  ? 'bg-midnight-750 border-violet-500 shadow-glow text-slate-100 ring-2 ring-violet-500/20'
+                  : 'bg-midnight-900/40 border-midnight-700/50 text-slate-500 opacity-60'
               }`}
             >
               <div className="flex items-center justify-between mb-2">
                 <Icon
-                  className={`w-5 h-5 ${
+                  className={`w-4 h-4 ${
                     status === 'complete'
-                      ? 'text-verified-teal'
+                      ? 'text-teal-400'
                       : status === 'active'
-                      ? 'text-electric-indigo'
-                      : 'text-ink-faint'
+                      ? 'text-violet-400'
+                      : 'text-slate-600'
                   }`}
                 />
-                {status === 'complete' && <CheckCircle2 className="w-4 h-4 text-verified-teal" />}
-                {status === 'active' && <Loader2 className="w-4 h-4 text-electric-indigo animate-spin" />}
+                {status === 'complete' && <CheckCircle2 className="w-4 h-4 text-teal-400" />}
+                {status === 'active' && <Loader2 className="w-4 h-4 text-violet-400 animate-spin" />}
               </div>
-              <p className="font-semibold text-sm">{stage.label}</p>
-              <p className="text-[11px] text-ink-muted leading-tight mt-0.5">{stage.desc}</p>
+              <p className="font-semibold text-xs sm:text-sm">{stage.label}</p>
+              <p className="text-[10px] sm:text-[11px] text-slate-400 leading-tight mt-0.5">{stage.desc}</p>
             </div>
           );
         })}

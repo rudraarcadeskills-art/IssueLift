@@ -1,6 +1,7 @@
 import type { Config } from "tailwindcss";
 
 export default {
+  darkMode: "class",
   content: [
     "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
@@ -9,40 +10,40 @@ export default {
   theme: {
     extend: {
       colors: {
-        canvas: {
-          DEFAULT: "#F7F6FF",
-          subtle: "#F0EEFC",
-          card: "#FFFFFF",
+        // Midnight Ink theme palette
+        midnight: {
+          950: "#060A14", // Deepest background
+          900: "#0B1020", // Default canvas dark
+          850: "#0F162A", // Secondary canvas dark
+          800: "#121A2B", // Elevated surface dark
+          750: "#162035", // Hover surface
+          700: "#1E2A44", // Deep border
+          600: "#2B3C5E", // Border accent
         },
-        ink: {
-          DEFAULT: "#17152D",
-          soft: "#2C284C",
-          muted: "#635F80",
-          faint: "#9B97B5",
-          border: "#E2DFF4",
+        violet: {
+          500: "#8B5CF6", // Electric violet
+          600: "#7C3AED",
+          400: "#A78BFA",
+          950: "#1E113B",
         },
-        electric: {
-          indigo: "#7057F5",
-          "indigo-hover": "#5F46E5",
-          "indigo-surface": "#F2EFFF",
-          blue: "#477BFF",
-          "blue-hover": "#3366EE",
-          "blue-surface": "#EDF3FF",
+        sky: {
+          500: "#3B82F6",
+          400: "#60A5FA", // Bright blue
         },
-        verified: {
-          teal: "#26C7C9",
-          surface: "#E7FAFA",
-          border: "#A1EBEB",
+        teal: {
+          400: "#2DD4BF", // Evidence teal
+          500: "#14B8A6",
+          950: "#042F2E",
         },
-        caution: {
-          coral: "#FF7268",
-          surface: "#FFF0EF",
-          border: "#FFC8C4",
+        coral: {
+          400: "#FB7185", // Warning coral
+          500: "#F43F5E",
+          950: "#4C0519",
         },
-        progress: {
-          lime: "#C9F27A",
-          surface: "#F7FDEB",
-          dark: "#5E8018",
+        amber: {
+          400: "#FBBF24",
+          500: "#F59E0B",
+          950: "#451A03",
         },
       },
       fontFamily: {
@@ -64,9 +65,9 @@ export default {
         ],
       },
       boxShadow: {
-        card: "0 2px 12px -2px rgba(23, 21, 45, 0.06), 0 1px 3px 0 rgba(23, 21, 45, 0.04)",
-        "card-hover": "0 12px 24px -6px rgba(112, 87, 245, 0.12), 0 4px 8px -2px rgba(23, 21, 45, 0.06)",
-        glow: "0 0 24px 0 rgba(112, 87, 245, 0.25)",
+        glow: "0 0 25px -5px rgba(139, 92, 246, 0.25)",
+        "glow-teal": "0 0 25px -5px rgba(45, 212, 191, 0.25)",
+        "card-dark": "0 4px 20px -2px rgba(0, 0, 0, 0.5), 0 2px 6px -1px rgba(0, 0, 0, 0.3)",
       },
     },
   },

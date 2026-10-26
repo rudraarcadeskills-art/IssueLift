@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Header } from '@/components/Header';
+import { Header, ActiveView } from '@/components/Header';
 import { Footer } from '@/components/Footer';
 import { IssueInputForm } from '@/components/IssueInputForm';
 import { ScanProgressBar, ScanStage } from '@/components/ScanProgressBar';
@@ -12,6 +12,7 @@ import { DeterministicClaimGateCard } from '@/components/DeterministicClaimGateC
 import { SetupTruthCard } from '@/components/SetupTruthCard';
 import { MaintainerHandoffCard } from '@/components/MaintainerHandoffCard';
 import { ProofBundleExportModal } from '@/components/ProofBundleExportModal';
+import { ProofBenchViewer } from '@/components/ProofBenchViewer';
 import { MissingKeyBanner } from '@/components/MissingKeyBanner';
 import { ContributionContract, AcceptanceCriterion, MaintainerHandoff } from '@/lib/types';
 import {
@@ -26,19 +27,29 @@ import {
   GitPullRequest,
   Sparkles,
   BookOpen,
+  RotateCcw,
+  Layers,
+  ChevronRight,
+  ShieldAlert,
 } from 'lucide-react';
 
 export default function HomePage() {
+  const [activeView, setActiveView] = useState<ActiveView>('scanner');
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<'all' | 'contract' | 'tracemap' | 'claimgate' | 'setup' | 'handoff'>('all');
   const [isLoading, setIsLoading] = useState(false);
   const [scanStage, setScanStage] = useState<ScanStage>('idle');
   const [error, setError] = useState<string | null>(null);
   const [contract, setContract] = useState<ContributionContract | null>(null);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isGemmaConfigured, setIsGemmaConfigured] = useState<boolean>(false);
+  const [bannerDismissed, setBannerDismissed] = useState<boolean>(false);
 
   useEffect(() => {
     fetch('/api/health')
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error('Health check failed');
+        return res.json();
+      })
       .then((data) => {
         if (data?.gemma?.configured) {
           setIsGemmaConfigured(true);
@@ -51,6 +62,7 @@ export default function HomePage() {
     setIsLoading(true);
     setError(null);
     setContract(null);
+    setActiveView('scanner');
 
     // Realistic scan stage transitions
     setScanStage('fetching_issue');
@@ -63,13 +75,13 @@ export default function HomePage() {
       });
 
       setScanStage('inspecting_repo');
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 250));
 
       setScanStage('reasoning_gemma');
-      await new Promise((r) => setTimeout(r, 400));
+      await new Promise((r) => setTimeout(r, 350));
 
       setScanStage('claim_gate');
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 250));
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -79,6 +91,10 @@ export default function HomePage() {
       const contractData: ContributionContract = await response.json();
       setContract(contractData);
       setScanStage('complete');
+
+      if (contractData.ai_configured) {
+        setIsGemmaConfigured(true);
+      }
     } catch (err: any) {
       setError(err.message || 'An unexpected error occurred while scanning the issue.');
       setScanStage('idle');
@@ -103,199 +119,407 @@ export default function HomePage() {
     });
   };
 
+  const handleResetScan = () => {
+    setContract(null);
+    setScanStage('idle');
+    setError(null);
+    setActiveWorkspaceTab('all');
+  };
+
   return (
-    <div className="min-h-screen flex flex-col bg-canvas text-ink">
-      <Header />
+    <div className="min-h-screen flex flex-col bg-midnight-950 text-slate-100 selection:bg-violet-500 selection:text-white transition-colors">
+      <Header
+        activeView={activeView}
+        onSelectView={setActiveView}
+        isGemmaActive={contract?.ai_configured || isGemmaConfigured}
+      />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 space-y-12">
-        {/* Hero Section */}
-        <section className="text-center space-y-4 max-w-4xl mx-auto pt-4 sm:pt-8">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-electric-indigo/10 border border-electric-indigo/20 text-electric-indigo text-xs font-semibold uppercase tracking-wider">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Before Anyone Edits Code</span>
-          </div>
-
-          <h1 className="text-3xl sm:text-5xl font-extrabold text-ink tracking-tight leading-tight">
-            Turn Any Public GitHub Issue into a{' '}
-            <span className="text-transparent bg-clip-text gradient-accent">
-              Proven Contribution Contract
-            </span>
-          </h1>
-
-          <p className="text-base sm:text-lg text-ink-muted max-w-2xl mx-auto leading-relaxed">
-            Define what "done" means, map requirements to verified repository test evidence, and export a reviewable Proof Bundle before writing your first line of code.
-          </p>
-
-          {/* Intake Hero Form */}
-          <div className="pt-4">
-            <IssueInputForm onScan={handleScan} isLoading={isLoading} error={error} />
-          </div>
-        </section>
-
-        {/* Live Scan Stages Indicator */}
-        <ScanProgressBar currentStage={scanStage} />
-
-        {/* Missing Key Guidance Banner */}
-        {!isGemmaConfigured && <MissingKeyBanner />}
-
-        {/* Interactive Analysis Workspace */}
-        {contract && (
-          <section className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
-            {/* Top Export & Action Bar */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-2xl glass-panel border border-ink-border">
-              <div className="flex items-center gap-3">
-                <span className="w-3 h-3 rounded-full bg-verified-teal animate-pulse" />
-                <span className="font-semibold text-sm text-ink">
-                  Analysis Active: {contract.issue_metadata.owner}/{contract.issue_metadata.repo} #{contract.issue_metadata.number}
-                </span>
-                <span className="text-xs text-ink-muted hidden md:inline">
-                  • {contract.criteria.length} Criteria Compiled
-                </span>
-              </div>
-
-              <div className="flex items-center gap-3 w-full sm:w-auto">
-                <button
-                  onClick={() => setIsExportOpen(true)}
-                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl gradient-accent text-white text-xs font-semibold flex items-center justify-center gap-2 shadow-md shadow-electric-indigo/20 hover:opacity-95 transition-opacity cursor-pointer"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Download Proof Bundle</span>
-                </button>
-              </div>
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 space-y-10">
+        {/* VIEW 1: PROOFBENCH SUITE */}
+        {activeView === 'proofbench' && (
+          <div className="space-y-6">
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <button
+                onClick={() => setActiveView('scanner')}
+                className="hover:text-violet-300 transition-colors"
+              >
+                Workspace
+              </button>
+              <ChevronRight className="w-3.5 h-3.5" />
+              <span className="text-slate-200 font-medium">Deterministic Guardrail Console</span>
             </div>
-
-            {/* 1. Issue Overview & Readiness Gate */}
-            <IssueOverviewCard contract={contract} />
-
-            {/* 2. Contribution Contract Compiler */}
-            <ContributionContractCard
-              criteria={contract.criteria}
-              onUpdateCriteria={handleUpdateCriteria}
-            />
-
-            {/* 3. Acceptance-to-Test TraceMap & Test Gap Radar */}
-            <TraceMapRadar
-              criteria={contract.criteria}
-              defaultBranch={contract.issue_metadata.default_branch}
-              owner={contract.issue_metadata.owner}
-              repo={contract.issue_metadata.repo}
-              globalTestCommand={contract.setup_truth.test_command}
-            />
-
-            {/* 4. Deterministic Claim Gate */}
-            <DeterministicClaimGateCard contract={contract} />
-
-            {/* 5. Setup Truth */}
-            <SetupTruthCard setupTruth={contract.setup_truth} />
-
-            {/* 6. Maintainer Handoff */}
-            <MaintainerHandoffCard
-              handoff={contract.maintainer_handoff}
-              issueNumber={contract.issue_metadata.number}
-              onUpdateHandoff={handleUpdateHandoff}
-            />
-
-            {/* 7. First-Hour Route & PR Checklist */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-white rounded-2xl border border-ink-border shadow-card p-6 space-y-4">
-                <div className="flex items-center gap-2 pb-3 border-b border-ink-border/70">
-                  <Compass className="w-5 h-5 text-electric-indigo" />
-                  <h3 className="font-bold text-base text-ink">First-Hour Contributor Route</h3>
-                </div>
-                <ol className="space-y-3 text-xs sm:text-sm text-ink-soft">
-                  {contract.first_hour_route.map((step, idx) => (
-                    <li key={idx} className="flex items-start gap-2.5">
-                      <span className="w-5 h-5 rounded-full bg-electric-indigo/10 text-electric-indigo font-bold text-xs flex items-center justify-center shrink-0 mt-0.5">
-                        {idx + 1}
-                      </span>
-                      <span className="leading-relaxed">{step}</span>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-
-              <div className="bg-white rounded-2xl border border-ink-border shadow-card p-6 space-y-4">
-                <div className="flex items-center gap-2 pb-3 border-b border-ink-border/70">
-                  <ListChecks className="w-5 h-5 text-verified-teal" />
-                  <h3 className="font-bold text-base text-ink">Pre-PR Readiness Checklist</h3>
-                </div>
-                <ul className="space-y-3 text-xs sm:text-sm text-ink-soft">
-                  {contract.pr_checklist.map((item, idx) => (
-                    <li key={idx} className="flex items-start gap-2.5">
-                      <CheckCircle2 className="w-4 h-4 text-verified-teal shrink-0 mt-0.5" />
-                      <span className="leading-relaxed">{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-
-            {/* Export Modal */}
-            <ProofBundleExportModal
-              contract={contract}
-              isOpen={isExportOpen}
-              onClose={() => setIsExportOpen(false)}
-            />
-          </section>
+            <ProofBenchViewer />
+          </div>
         )}
 
-        {/* How It Works & Open Innovation Section */}
-        <section id="how-it-works" className="pt-12 border-t border-ink-border/70 space-y-8">
-          <div className="text-center space-y-2 max-w-3xl mx-auto">
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-ink tracking-tight">
-              The 5-Step Pre-Implementation Architecture
-            </h2>
-            <p className="text-sm text-ink-muted">
-              Why IssueLift starts after an issue is picked and before anyone writes code.
-            </p>
-          </div>
+        {/* VIEW 2: PLAYBOOK & OPEN INNOVATION */}
+        {activeView === 'playbook' && (
+          <div className="space-y-8 animate-in fade-in duration-200">
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <button
+                onClick={() => setActiveView('scanner')}
+                className="hover:text-violet-300 transition-colors"
+              >
+                Workspace
+              </button>
+              <ChevronRight className="w-3.5 h-3.5" />
+              <span className="text-slate-200 font-medium">Open Innovation Methodology</span>
+            </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="p-6 rounded-2xl bg-white border border-ink-border shadow-card space-y-3">
-              <div className="w-9 h-9 rounded-xl bg-electric-indigo/10 text-electric-indigo flex items-center justify-center font-bold text-sm">
-                1
+            <div className="text-center space-y-3 max-w-3xl mx-auto">
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-300 text-xs font-semibold">
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>Pre-Contribution Methodology</span>
               </div>
-              <h3 className="font-bold text-base text-ink">Contribution Contract</h3>
-              <p className="text-xs text-ink-muted leading-relaxed">
-                Derives AC-01, AC-02... from real issue quotes. AI-proposed criteria are clearly separated and marked inferred.
+              <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-100 tracking-tight">
+                Why Open Innovation Matters in Hacktoberfest 2026
+              </h1>
+              <p className="text-sm sm:text-base text-slate-300 leading-relaxed">
+                IssueLift transforms unstructured issue discussions into verifiable, grounded Contribution Contracts before anyone touches repository code.
               </p>
             </div>
 
-            <div className="p-6 rounded-2xl bg-white border border-ink-border shadow-card space-y-3">
-              <div className="w-9 h-9 rounded-xl bg-electric-blue/10 text-electric-blue flex items-center justify-center font-bold text-sm">
-                2
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4">
+              <div className="p-6 rounded-2xl bg-midnight-800/90 dark-panel border border-midnight-700/80 shadow-card space-y-3">
+                <div className="w-10 h-10 rounded-xl bg-violet-500/20 border border-violet-500/30 text-violet-300 flex items-center justify-center font-bold text-base shadow-glow">
+                  1
+                </div>
+                <h3 className="font-bold text-base text-slate-100">Contribution Contract</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Extracts explicit verbatim acceptance quotes from issue text. AI inferences are quarantined with [AI-PROPOSED] tags and edit actions.
+                </p>
               </div>
-              <h3 className="font-bold text-base text-ink">TraceMap & Radar</h3>
-              <p className="text-xs text-ink-muted leading-relaxed">
-                Maps each criterion toward candidate source files and test candidates. Honest bounded scan wording: never claims "no tests exist".
-              </p>
+
+              <div className="p-6 rounded-2xl bg-midnight-800/90 dark-panel border border-midnight-700/80 shadow-card space-y-3">
+                <div className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-500/30 text-sky-300 flex items-center justify-center font-bold text-base shadow-glow-blue">
+                  2
+                </div>
+                <h3 className="font-bold text-base text-slate-100">TraceMap & Radar</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Bridges criteria directly to candidate source files and test candidates. Honest bounded scan wording avoids unsubstantiated negative claims.
+                </p>
+              </div>
+
+              <div className="p-6 rounded-2xl bg-midnight-800/90 dark-panel border border-midnight-700/80 shadow-card space-y-3">
+                <div className="w-10 h-10 rounded-xl bg-teal-500/20 border border-teal-500/30 text-teal-300 flex items-center justify-center font-bold text-base shadow-glow-teal">
+                  3
+                </div>
+                <h3 className="font-bold text-base text-slate-100">Deterministic Claim Gate</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Deterministic audit rules verify repository tree paths, reject hallucinated files, and prevent prompt injection from compromising readiness.
+                </p>
+              </div>
             </div>
 
-            <div className="p-6 rounded-2xl bg-white border border-ink-border shadow-card space-y-3">
-              <div className="w-9 h-9 rounded-xl bg-verified-surface text-verified-teal flex items-center justify-center font-bold text-sm">
-                3
+            <div className="p-8 rounded-3xl bg-midnight-800/80 border border-violet-500/30 shadow-card space-y-4">
+              <div className="flex items-center gap-2 text-violet-400 font-bold text-xs uppercase tracking-wider">
+                <ShieldCheck className="w-4 h-4" />
+                <span>Open-Source Reliability Principle</span>
               </div>
-              <h3 className="font-bold text-base text-ink">Claim Gate & Proof</h3>
-              <p className="text-xs text-ink-muted leading-relaxed">
-                Deterministic code validates that every suggested path exists in the GitHub tree. Reusable Contribution Proof Bundle export.
+              <h3 className="text-xl sm:text-2xl font-bold text-slate-100 tracking-tight">
+                Inspectable Guardrails, Not Black-Box Automation
+              </h3>
+              <p className="text-sm text-slate-300 leading-relaxed max-w-4xl">
+                Open innovation in developer tools requires that safety guardrails are just as transparent and inspectable as the software they protect. While Gemma 4 provides deep multilingual reasoning and schema synthesis, the Claim Gate and ProofBench suite guarantee that zero hallucinated file paths reach maintainers. Contributors can add new failure fixtures without fine-tuning weights or paying cloud fees.
               </p>
             </div>
           </div>
+        )}
 
-          {/* Why Open Innovation Matters Box */}
-          <div className="p-8 rounded-3xl bg-gradient-to-r from-electric-indigo/5 via-electric-blue/5 to-verified-teal/5 border border-electric-indigo/20 space-y-4">
-            <div className="flex items-center gap-2 text-electric-indigo font-bold text-sm uppercase tracking-wider">
-              <ShieldCheck className="w-4 h-4" />
-              <span>Hacktoberfest 2026 Core Theme</span>
-            </div>
-            <h3 className="text-xl sm:text-2xl font-bold text-ink tracking-tight">
-              Why Does Open Innovation Matter?
-            </h3>
-            <p className="text-sm text-ink-soft leading-relaxed max-w-4xl">
-              IssueLift turns an open issue into a reviewable Contribution Contract and evidence-to-test map before coding begins. The deterministic Claim Gate can be inspected and improved; the public ProofBench lets contributors add counterexamples whenever a path, citation, requirement or test-evidence label is wrong. This makes reliability rules—not only UI code—open to community inspection and extension. We claim no impact numbers until measured.
-            </p>
+        {/* VIEW 3: SCANNER & ACTIVE WORKSPACE */}
+        {activeView === 'scanner' && (
+          <div className="space-y-10">
+            {/* Hero Intake Header (shown prominently when no contract is loaded) */}
+            {!contract && (
+              <section className="text-center space-y-4 max-w-4xl mx-auto pt-4 sm:pt-8 animate-in fade-in duration-300">
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-violet-500/10 border border-violet-500/30 text-violet-300 text-xs font-semibold uppercase tracking-wider shadow-glow">
+                  <Sparkles className="w-3.5 h-3.5 text-violet-400" />
+                  <span>Before Anyone Edits Code</span>
+                </div>
+
+                <h1 className="text-3xl sm:text-5xl font-extrabold text-slate-100 tracking-tight leading-tight">
+                  Turn Any Public GitHub Issue into a{' '}
+                  <span className="text-gradient-electric">
+                    Proven Contribution Contract
+                  </span>
+                </h1>
+
+                <p className="text-base sm:text-lg text-slate-300 max-w-2xl mx-auto leading-relaxed">
+                  Define what "done" means, map requirements to verified repository test evidence, and export a reviewable Proof Bundle before writing your first line of code.
+                </p>
+
+                {/* Intake Form */}
+                <div className="pt-4">
+                  <IssueInputForm onScan={handleScan} isLoading={isLoading} error={error} />
+                </div>
+              </section>
+            )}
+
+            {/* Live Scan Pipeline Progress */}
+            <ScanProgressBar currentStage={scanStage} />
+
+            {/* Missing Key Guidance Banner (only if unconfigured and not dismissed) */}
+            {!isGemmaConfigured && !bannerDismissed && (
+              <MissingKeyBanner onDismiss={() => setBannerDismissed(true)} />
+            )}
+
+            {/* Interactive Analysis Workspace (When Contract is Loaded) */}
+            {contract && (
+              <section className="space-y-8 animate-in fade-in slide-in-from-bottom-3 duration-300">
+                {/* Workspace Header & Breadcrumb Bar */}
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-4 rounded-2xl bg-midnight-800/90 dark-panel border border-midnight-700/80 shadow-card">
+                  {/* Left: Breadcrumbs & Issue Target */}
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs">
+                    <span className="w-2.5 h-2.5 rounded-full bg-teal-400 animate-pulse" />
+                    <span className="font-bold text-sm text-slate-100 flex items-center gap-1.5">
+                      <span>{contract.issue_metadata.owner}/{contract.issue_metadata.repo}</span>
+                      <span className="text-violet-400 font-mono">#{contract.issue_metadata.number}</span>
+                    </span>
+                    <span className="text-slate-500 hidden sm:inline">•</span>
+                    <span className="px-2 py-0.5 rounded-md bg-midnight-950 font-mono text-[11px] text-slate-300 border border-midnight-700/80">
+                      branch: {contract.issue_metadata.default_branch}
+                    </span>
+                    <span className="text-slate-400 hidden md:inline">
+                      ({contract.criteria.length} Criteria Compiled)
+                    </span>
+                  </div>
+
+                  {/* Right: Actions (Reset Scan & Download Proof Bundle) */}
+                  <div className="flex items-center gap-2.5 w-full lg:w-auto">
+                    <button
+                      onClick={handleResetScan}
+                      className="px-3.5 py-2 rounded-xl border border-midnight-700 bg-midnight-900/80 hover:bg-midnight-800 text-slate-300 hover:text-slate-100 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      title="Scan another GitHub issue"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Scan Another Issue</span>
+                    </button>
+
+                    <button
+                      onClick={() => setIsExportOpen(true)}
+                      className="flex-1 lg:flex-initial px-4 py-2 rounded-xl bg-gradient-to-r from-violet-600 via-sky-600 to-teal-500 hover:from-violet-500 hover:to-teal-400 text-white text-xs font-semibold flex items-center justify-center gap-2 shadow-glow hover:opacity-95 transition-all cursor-pointer"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>Export Proof Bundle</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Workspace Sub-Navigation Tabs */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs border-b border-midnight-800">
+                  <button
+                    onClick={() => setActiveWorkspaceTab('all')}
+                    className={`px-3 py-1.5 rounded-xl font-medium transition-all cursor-pointer whitespace-nowrap ${
+                      activeWorkspaceTab === 'all'
+                        ? 'bg-violet-600/20 text-violet-300 border border-violet-500/40 shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-midnight-800'
+                    }`}
+                  >
+                    All Evidence (Full View)
+                  </button>
+                  <button
+                    onClick={() => setActiveWorkspaceTab('contract')}
+                    className={`px-3 py-1.5 rounded-xl font-medium transition-all cursor-pointer whitespace-nowrap ${
+                      activeWorkspaceTab === 'contract'
+                        ? 'bg-violet-600/20 text-violet-300 border border-violet-500/40 shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-midnight-800'
+                    }`}
+                  >
+                    Criteria Contract ({contract.criteria.length})
+                  </button>
+                  <button
+                    onClick={() => setActiveWorkspaceTab('tracemap')}
+                    className={`px-3 py-1.5 rounded-xl font-medium transition-all cursor-pointer whitespace-nowrap ${
+                      activeWorkspaceTab === 'tracemap'
+                        ? 'bg-violet-600/20 text-violet-300 border border-violet-500/40 shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-midnight-800'
+                    }`}
+                  >
+                    TraceMap & Test Radar
+                  </button>
+                  <button
+                    onClick={() => setActiveWorkspaceTab('claimgate')}
+                    className={`px-3 py-1.5 rounded-xl font-medium transition-all cursor-pointer whitespace-nowrap ${
+                      activeWorkspaceTab === 'claimgate'
+                        ? 'bg-violet-600/20 text-violet-300 border border-violet-500/40 shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-midnight-800'
+                    }`}
+                  >
+                    Claim Gate Truth Ledger
+                  </button>
+                  <button
+                    onClick={() => setActiveWorkspaceTab('setup')}
+                    className={`px-3 py-1.5 rounded-xl font-medium transition-all cursor-pointer whitespace-nowrap ${
+                      activeWorkspaceTab === 'setup'
+                        ? 'bg-violet-600/20 text-violet-300 border border-violet-500/40 shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-midnight-800'
+                    }`}
+                  >
+                    Setup & Commands
+                  </button>
+                  <button
+                    onClick={() => setActiveWorkspaceTab('handoff')}
+                    className={`px-3 py-1.5 rounded-xl font-medium transition-all cursor-pointer whitespace-nowrap ${
+                      activeWorkspaceTab === 'handoff'
+                        ? 'bg-violet-600/20 text-violet-300 border border-violet-500/40 shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-midnight-800'
+                    }`}
+                  >
+                    Maintainer Handoff
+                  </button>
+                </div>
+
+                {/* Tab Views */}
+                {(activeWorkspaceTab === 'all' || activeWorkspaceTab === 'contract') && (
+                  <div className="space-y-8">
+                    {/* 1. Issue Overview & Readiness Gate */}
+                    <IssueOverviewCard contract={contract} />
+
+                    {/* 2. Contribution Contract Compiler */}
+                    <ContributionContractCard
+                      criteria={contract.criteria}
+                      onUpdateCriteria={handleUpdateCriteria}
+                    />
+                  </div>
+                )}
+
+                {(activeWorkspaceTab === 'all' || activeWorkspaceTab === 'tracemap') && (
+                  /* 3. Acceptance-to-Test TraceMap & Test Gap Radar */
+                  <TraceMapRadar
+                    criteria={contract.criteria}
+                    defaultBranch={contract.issue_metadata.default_branch}
+                    owner={contract.issue_metadata.owner}
+                    repo={contract.issue_metadata.repo}
+                    globalTestCommand={contract.setup_truth.test_command}
+                  />
+                )}
+
+                {(activeWorkspaceTab === 'all' || activeWorkspaceTab === 'claimgate') && (
+                  /* 4. Deterministic Claim Gate */
+                  <DeterministicClaimGateCard contract={contract} />
+                )}
+
+                {(activeWorkspaceTab === 'all' || activeWorkspaceTab === 'setup') && (
+                  /* 5. Setup Truth */
+                  <SetupTruthCard setupTruth={contract.setup_truth} />
+                )}
+
+                {(activeWorkspaceTab === 'all' || activeWorkspaceTab === 'handoff') && (
+                  /* 6. Maintainer Handoff */
+                  <MaintainerHandoffCard
+                    handoff={contract.maintainer_handoff}
+                    issueNumber={contract.issue_metadata.number}
+                    onUpdateHandoff={handleUpdateHandoff}
+                  />
+                )}
+
+                {/* 7. First-Hour Route & PR Checklist */}
+                {activeWorkspaceTab === 'all' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="bg-midnight-800/90 dark-panel rounded-2xl border border-midnight-700/80 shadow-card p-6 space-y-4">
+                      <div className="flex items-center gap-2 pb-3 border-b border-midnight-700/70">
+                        <Compass className="w-5 h-5 text-violet-400" />
+                        <h3 className="font-bold text-base text-slate-100">First-Hour Contributor Route</h3>
+                      </div>
+                      <ol className="space-y-3 text-xs sm:text-sm text-slate-300">
+                        {contract.first_hour_route.map((step, idx) => (
+                          <li key={idx} className="flex items-start gap-2.5">
+                            <span className="w-5 h-5 rounded-full bg-violet-500/20 text-violet-300 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5 border border-violet-500/30">
+                              {idx + 1}
+                            </span>
+                            <span className="leading-relaxed">{step}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+
+                    <div className="bg-midnight-800/90 dark-panel rounded-2xl border border-midnight-700/80 shadow-card p-6 space-y-4">
+                      <div className="flex items-center gap-2 pb-3 border-b border-midnight-700/70">
+                        <ListChecks className="w-5 h-5 text-teal-400" />
+                        <h3 className="font-bold text-base text-slate-100">Pre-PR Readiness Checklist</h3>
+                      </div>
+                      <ul className="space-y-3 text-xs sm:text-sm text-slate-300">
+                        {contract.pr_checklist.map((item, idx) => (
+                          <li key={idx} className="flex items-start gap-2.5">
+                            <CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
+                            <span className="leading-relaxed">{item}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+
+                {/* Export Modal */}
+                <ProofBundleExportModal
+                  contract={contract}
+                  isOpen={isExportOpen}
+                  onClose={() => setIsExportOpen(false)}
+                />
+              </section>
+            )}
+
+            {/* How It Works & Open Innovation Section (shown on scanner view below intake) */}
+            {!contract && (
+              <section id="how-it-works" className="pt-12 border-t border-midnight-800 space-y-8">
+                <div className="text-center space-y-2 max-w-3xl mx-auto">
+                  <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-100 tracking-tight">
+                    The 5-Step Pre-Implementation Architecture
+                  </h2>
+                  <p className="text-sm text-slate-400">
+                    Why IssueLift starts after an issue is picked and before anyone writes code.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="p-6 rounded-2xl bg-midnight-800/90 dark-panel border border-midnight-700/80 shadow-card space-y-3">
+                    <div className="w-9 h-9 rounded-xl bg-violet-500/20 border border-violet-500/30 text-violet-300 flex items-center justify-center font-bold text-sm">
+                      1
+                    </div>
+                    <h3 className="font-bold text-base text-slate-100">Contribution Contract</h3>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Derives AC-01, AC-02... from real issue quotes. AI-proposed criteria are clearly separated and marked inferred.
+                    </p>
+                  </div>
+
+                  <div className="p-6 rounded-2xl bg-midnight-800/90 dark-panel border border-midnight-700/80 shadow-card space-y-3">
+                    <div className="w-9 h-9 rounded-xl bg-sky-500/20 border border-sky-500/30 text-sky-300 flex items-center justify-center font-bold text-sm">
+                      2
+                    </div>
+                    <h3 className="font-bold text-base text-slate-100">TraceMap & Radar</h3>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Maps each criterion toward candidate source files and test candidates. Honest bounded scan wording: never claims "no tests exist".
+                    </p>
+                  </div>
+
+                  <div className="p-6 rounded-2xl bg-midnight-800/90 dark-panel border border-midnight-700/80 shadow-card space-y-3">
+                    <div className="w-9 h-9 rounded-xl bg-teal-500/20 border border-teal-500/30 text-teal-300 flex items-center justify-center font-bold text-sm">
+                      3
+                    </div>
+                    <h3 className="font-bold text-base text-slate-100">Claim Gate & Proof</h3>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Deterministic code validates that every suggested path exists in the GitHub tree. Reusable Contribution Proof Bundle export.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Why Open Innovation Matters Card */}
+                <div className="p-8 rounded-3xl bg-midnight-800/80 border border-violet-500/20 shadow-card space-y-4">
+                  <div className="flex items-center gap-2 text-violet-400 font-bold text-xs uppercase tracking-wider">
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>Hacktoberfest 2026 Core Theme</span>
+                  </div>
+                  <h3 className="text-xl sm:text-2xl font-bold text-slate-100 tracking-tight">
+                    Why Does Open Innovation Matter?
+                  </h3>
+                  <p className="text-sm text-slate-300 leading-relaxed max-w-4xl">
+                    IssueLift turns an open issue into a reviewable Contribution Contract and evidence-to-test map before coding begins. The deterministic Claim Gate can be inspected and improved; the public ProofBench lets contributors add counterexamples whenever a path, citation, requirement or test-evidence label is wrong. This makes reliability rules—not only UI code—open to community inspection and extension. We claim no impact numbers until measured.
+                  </p>
+                </div>
+              </section>
+            )}
           </div>
-        </section>
+        )}
       </main>
 
       <Footer />

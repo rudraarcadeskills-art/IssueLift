@@ -1,11 +1,18 @@
 'use client';
 
 import React, { useState } from 'react';
-import { KeyRound, ChevronDown, ChevronUp, Copy, Check, ExternalLink } from 'lucide-react';
+import { KeyRound, ChevronDown, ChevronUp, Copy, Check, ExternalLink, X } from 'lucide-react';
 
-export function MissingKeyBanner() {
+interface MissingKeyBannerProps {
+  onDismiss?: () => void;
+}
+
+export function MissingKeyBanner({ onDismiss }: MissingKeyBannerProps) {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+
+  if (dismissed) return null;
 
   const envLine = 'GEMMA_API_KEY=your_api_key_here';
 
@@ -15,61 +22,75 @@ export function MissingKeyBanner() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleDismiss = () => {
+    setDismissed(true);
+    onDismiss?.();
+  };
+
   return (
-    <div className="w-full max-w-4xl mx-auto my-6 p-4 sm:p-5 rounded-2xl bg-amber-50/90 border border-amber-200/90 text-amber-950 shadow-sm">
+    <div className="w-full max-w-4xl mx-auto my-4 p-4 rounded-2xl bg-amber-950/40 border border-amber-500/40 text-amber-200 shadow-md">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-start sm:items-center gap-3">
-          <div className="p-2 rounded-xl bg-amber-100 text-amber-700 shrink-0">
-            <KeyRound className="w-5 h-5" />
+          <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400 shrink-0 border border-amber-500/20">
+            <KeyRound className="w-4 h-4" />
           </div>
           <div>
-            <h4 className="font-semibold text-sm text-amber-900">
+            <h4 className="font-semibold text-xs sm:text-sm text-amber-200">
               Gemma 4 API Key Pending — Baseline Compiler Active
             </h4>
-            <p className="text-xs text-amber-800/90 mt-0.5">
-              Live GitHub data, Claim Gate, TraceMap, Setup Truth, and ProofBundle are fully functional using deterministic rules.
+            <p className="text-[11px] sm:text-xs text-amber-300/80 mt-0.5">
+              Deterministic GitHub intake, Claim Gate, TraceMap, and ProofBundle run offline. Configure your free key to activate Gemma 4 reasoning.
             </p>
           </div>
         </div>
 
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="self-start sm:self-auto px-3 py-1.5 rounded-lg bg-amber-100/80 hover:bg-amber-200/80 text-amber-900 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
-        >
-          <span>One-Step Key Setup</span>
-          {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer border border-amber-500/20"
+          >
+            <span>Setup Guide</span>
+            {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+          <button
+            onClick={handleDismiss}
+            className="p-1 rounded-lg hover:bg-amber-500/20 text-amber-400/80 hover:text-amber-200 transition-colors"
+            title="Dismiss notice"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {expanded && (
-        <div className="mt-4 pt-4 border-t border-amber-200/80 text-xs space-y-3 animate-in fade-in">
-          <p className="text-amber-900">
-            <strong>Exact Action:</strong> Add your Google AI Studio key to the git-ignored <code className="px-1.5 py-0.5 rounded bg-white font-mono text-[11px] border border-amber-300">.env.local</code> file in your IssueLift workspace root:
+        <div className="mt-3 pt-3 border-t border-amber-500/20 text-xs space-y-2.5 animate-in fade-in">
+          <p className="text-amber-200 text-[11px] sm:text-xs">
+            Add your Google AI Studio free-tier key to <code className="px-1.5 py-0.5 rounded bg-midnight-900 font-mono text-[11px] text-amber-300 border border-midnight-700">.env.local</code> in the IssueLift project root:
           </p>
 
-          <div className="flex items-center justify-between p-2.5 rounded-xl bg-white/90 border border-amber-300 font-mono text-xs text-ink">
+          <div className="flex items-center justify-between p-2 rounded-xl bg-midnight-900/90 border border-midnight-700 font-mono text-xs text-amber-300">
             <span>{envLine}</span>
             <button
               onClick={handleCopy}
-              className="p-1 rounded hover:bg-amber-50 text-amber-800 transition-colors flex items-center gap-1"
+              className="p-1 rounded hover:bg-midnight-800 text-amber-400 transition-colors flex items-center gap-1 cursor-pointer"
               title="Copy snippet"
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-teal-600" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? <Check className="w-3.5 h-3.5 text-teal-400" /> : <Copy className="w-3.5 h-3.5" />}
               <span className="text-[11px] font-sans font-medium">{copied ? 'Copied' : 'Copy'}</span>
             </button>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 text-amber-800">
-            <span>• Key is free of charge on the Google AI Studio free tier.</span>
+          <div className="flex flex-wrap items-center gap-3 text-[11px] text-amber-400/90">
+            <span>• Free tier on Google AI Studio.</span>
             <a
               href="https://aistudio.google.com/apikey"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 font-semibold text-electric-indigo underline"
+              className="inline-flex items-center gap-1 font-semibold text-violet-400 hover:text-violet-300 underline"
             >
               Get Free Gemma Key <ExternalLink className="w-3 h-3" />
             </a>
-            <span>• Never commit .env.local; keep it strictly server-side.</span>
+            <span>• Kept server-side; never committed to git.</span>
           </div>
         </div>
       )}
