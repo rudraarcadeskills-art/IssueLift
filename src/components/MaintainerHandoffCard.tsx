@@ -31,7 +31,7 @@ export function MaintainerHandoffCard({
     proposedCriteria ? `### Proposed Acceptance Criteria:\n${proposedCriteria}\n\n` : ''
   }${
     validationPlan ? `### Verification Plan:\n${validationPlan}\n\n` : ''
-  }_Note: Prepared with [IssueLift](https://github.com/issuelift/issuelift) (pre-contribution evidence check)._`;
+  }_Note: Prepared with [IssueLift](https://github.com/rudraarcadeskills-art/IssueLift.git) (pre-contribution evidence check)._`;
 
   const copyQuestion = () => {
     navigator.clipboard.writeText(question);

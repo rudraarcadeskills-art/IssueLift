@@ -42,16 +42,20 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [contract, setContract] = useState<ContributionContract | null>(null);
   const [isExportOpen, setIsExportOpen] = useState(false);
-  const [gemmaConfigState, setGemmaConfigState] = useState<'checking' | 'configured' | 'missing'>('checking');
+  const [gemmaConfigState, setGemmaConfigState] = useState<'checking' | 'configured' | 'missing' | 'unavailable'>('checking');
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(false);
 
   useEffect(() => {
     fetch('/api/health')
       .then((res) => {
-        if (!res.ok) throw new Error('Health check failed');
+        if (!res.ok) {
+          setGemmaConfigState('unavailable');
+          return null;
+        }
         return res.json();
       })
       .then((data) => {
+        if (!data) return;
         if (data?.gemma?.configured) {
           setGemmaConfigState('configured');
         } else {
@@ -59,8 +63,16 @@ export default function HomePage() {
         }
       })
       .catch(() => {
-        setGemmaConfigState('missing');
+        setGemmaConfigState('unavailable');
       });
+
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const urlParam = params.get('url');
+      if (urlParam) {
+        handleScan(decodeURIComponent(urlParam));
+      }
+    }
   }, []);
 
   const handleScan = async (url: string) => {

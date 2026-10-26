@@ -193,10 +193,10 @@ export function Header({ activeView = 'scanner', onSelectView, isGemmaActive = f
           )}
 
           {engineStatus === 'server_error' && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 dark:bg-rose-950/60 text-rose-800 dark:text-coral-300 border border-rose-300 dark:border-coral-500/40">
-              <span className="w-2 h-2 rounded-full bg-rose-500" />
-              <span className="hidden sm:inline">Engine Offline</span>
-              <span className="sm:hidden font-mono text-[10px]">Offline</span>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 dark:bg-midnight-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-midnight-700">
+              <span className="w-2 h-2 rounded-full bg-slate-400" />
+              <span className="hidden sm:inline">Status Unavailable</span>
+              <span className="sm:hidden font-mono text-[10px]">Unavailable</span>
             </span>
           )}
 

@@ -7,6 +7,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC?style=flat-square&logo=tailwind-css)](https://tailwindcss.com/)
 [![Google Gemma 4](https://img.shields.io/badge/Google_Gemma_4-26B--A4B-7057F5?style=flat-square&logo=google)](https://ai.google.dev/gemma)
+[![Tests](https://img.shields.io/badge/Tests-30%2F30_Passing-brightgreen?style=flat-square)](tests/)
 [![ProofBench](https://img.shields.io/badge/ProofBench-7%2F7_Passing-26C7C9?style=flat-square)](docs/eval-report.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
@@ -35,6 +36,17 @@ IssueLift delivers a live, interactive developer workspace organized into five f
 3. **Evidence-Backed Contribution Contract:** Deconstructs issue discussions into discrete criteria (`AC-01`, `AC-02`...). Verbatim requirements retain clickable links to GitHub. AI proposals are quarantined with `AI-PROPOSED` tags and support in-memory editing.
 4. **Acceptance-to-Test TraceMap & Gap Radar:** Traverses the entire indexed repository tree without truncation bias. Maps each criterion to verified candidate source files, candidate test files, and substantiated test commands. When no test candidate exists, flags an honest Test Gap with manual reproduction steps.
 5. **Deterministic Claim Gate & Proof Bundle:** Enforces strict security invariants: every candidate file path must exist in the repository tree. Hallucinations are rejected and logged in the truth ledger. Exports a verifiable Markdown or JSON Proof Bundle before you write a single line of code.
+
+### Real UI Captures & Live Workspace Views
+
+#### 1. Landing & Issue Intake Workspace
+![IssueLift Landing & Intake Workspace](docs/screenshots/01-landing-hero.jpg)
+
+#### 2. Autonomous Analysis, Contribution Contract & TraceMap
+![Contribution Contract & TraceMap Results](docs/screenshots/02-tracemap-results.jpg)
+
+#### 3. Open ProofBench Deterministic Guardrail Console
+![Open ProofBench Deterministic Console](docs/screenshots/03-proofbench-suite.jpg)
 
 ---
 

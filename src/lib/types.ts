@@ -45,6 +45,7 @@ export interface CandidateTestFile {
   path: string;
   source_id: string;
   verified_exists: boolean;
+  assertions_inspected?: boolean;
 }
 
 export interface TestEvidenceInfo {
@@ -52,6 +53,8 @@ export interface TestEvidenceInfo {
   candidate_test_files: CandidateTestFile[];
   rationale: string;
   proposed_manual_validation?: string;
+  assertions_inspected?: boolean;
+  test_executed?: boolean;
 }
 
 export interface CommandInfo {
@@ -149,6 +152,7 @@ export interface GitHubIssueMetadata {
     html_url: string;
   }>;
   has_linked_pr_signal: boolean;
+  linked_pr_reference?: string;
   default_branch: string;
   checked_at: string;
 }

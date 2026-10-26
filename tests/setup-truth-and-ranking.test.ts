@@ -4,9 +4,14 @@ import {
   extractDocumentedCommands,
   rankRepositoryPaths,
   isLikelyTestFile,
+  detectLinkedPrSignal,
 } from '../src/lib/github';
 import { runDeterministicClaimGate } from '../src/lib/claim-gate';
-import { compileDeterministicBaselineContract } from '../src/lib/contract-compiler';
+import {
+  compileDeterministicBaselineContract,
+  extractExplicitCriteria,
+  buildMaintainerHandoff,
+} from '../src/lib/contract-compiler';
 import {
   AcceptanceCriterion,
   GitHubIssueMetadata,
@@ -361,5 +366,131 @@ describe('FIX 1 & FIX 2: Setup Truth, Manifest Scripts, and Path Ranking', () =>
     expect(setupTruth.run_command).toBeUndefined();
     expect(setupTruth.inspected_files).toContain('README.md');
     expect(setupTruth.notes).toContain('No test execution command substantiated in inspected files');
+  });
+
+  describe('FIX 1 Regression: detectLinkedPrSignal truthfulness', () => {
+    it('returns false for an ordinary issue with no pull request references', () => {
+      const body = 'When rendering dynamic route segments, an empty body appears with __next_error__. Steps to reproduce: 1. Clone repo 2. Run dev.';
+      const comments = [{ body: 'Can reproduce on canary version 15.0.1.' }];
+      const result = detectLinkedPrSignal(body, comments, []);
+
+      expect(result.hasLinkedPr).toBe(false);
+      expect(result.prReference).toBeUndefined();
+    });
+
+    it('returns true when a real linked GitHub pull request URL is present in the issue body', () => {
+      const body = 'This bug was previously investigated and fixed in https://github.com/vercel/next.js/pull/9999.';
+      const result = detectLinkedPrSignal(body, [], []);
+
+      expect(result.hasLinkedPr).toBe(true);
+      expect(result.prReference).toBe('https://github.com/vercel/next.js/pull/9999');
+      expect(result.source).toBe('explicit_pr_url');
+    });
+
+    it('returns true when explicit PR #number text appears in comments', () => {
+      const body = 'Need clarification on expected status code.';
+      const comments = [{ body: 'See PR #1234 where we started refactoring the error boundary.' }];
+      const result = detectLinkedPrSignal(body, comments, []);
+
+      expect(result.hasLinkedPr).toBe(true);
+      expect(result.prReference).toBe('PR #1234');
+      expect(result.source).toBe('issue_text');
+    });
+
+    it('returns true when timeline events include a cross-referenced pull request', () => {
+      const timelineEvents = [
+        {
+          event: 'cross-referenced',
+          source: {
+            issue: {
+              number: 5678,
+              html_url: 'https://github.com/facebook/react/pull/5678',
+              pull_request: {},
+            },
+          },
+        },
+      ];
+      const result = detectLinkedPrSignal('General bug report', [], timelineEvents);
+
+      expect(result.hasLinkedPr).toBe(true);
+      expect(result.prReference).toBe('https://github.com/facebook/react/pull/5678');
+      expect(result.source).toBe('timeline_event');
+    });
+
+    it('returns false for unrelated URLs such as documentation, issue links, and commits', () => {
+      const body = `
+        Related documentation: https://nextjs.org/docs/app/building-your-application/routing
+        Duplicate of issue https://github.com/vercel/next.js/issues/100123
+        Introduced in commit https://github.com/vercel/next.js/commit/abcdef123456
+        External reference: https://example.com/blog/error-handling
+      `;
+      const result = detectLinkedPrSignal(body, [], []);
+
+      expect(result.hasLinkedPr).toBe(false);
+      expect(result.prReference).toBeUndefined();
+    });
+  });
+
+  describe('FIX 2 Regression: isLikelyTestFile excludes fixtures and mocks', () => {
+    it('excludes fixture application component files inside test directories', () => {
+      expect(isLikelyTestFile('test/e2e/app-dir/not-found/fixtures/default/app/not-found.tsx')).toBe(false);
+      expect(isLikelyTestFile('test/e2e/fixtures/basic/pages/index.js')).toBe(false);
+      expect(isLikelyTestFile('test/fixtures/demo-app/src/page.tsx')).toBe(false);
+      expect(isLikelyTestFile('tests/__fixtures__/sample-data.json')).toBe(false);
+    });
+
+    it('excludes test helpers, mocks, and setup files', () => {
+      expect(isLikelyTestFile('test/setupTests.ts')).toBe(false);
+      expect(isLikelyTestFile('tests/helpers/test-utils.ts')).toBe(false);
+      expect(isLikelyTestFile('tests/mocks/server-handler.ts')).toBe(false);
+      expect(isLikelyTestFile('test/jest.setup.js')).toBe(false);
+    });
+
+    it('correctly includes genuine automated test files with explicit test/spec suffixes', () => {
+      expect(isLikelyTestFile('test/e2e/app-dir/not-found/not-found.test.ts')).toBe(true);
+      expect(isLikelyTestFile('packages/next/src/client/not-found.test.tsx')).toBe(true);
+      expect(isLikelyTestFile('src/components/Button.spec.tsx')).toBe(true);
+      expect(isLikelyTestFile('internal/route_test.go')).toBe(true);
+    });
+  });
+
+  describe('FIX 4 & FIX 5 Regression: Exact Quotes and Targeted Maintainer Handoff for Linked PR', () => {
+    it('extracts explicit expected behavior verbatim from issue markdown', () => {
+      const body = `
+### Current Behavior
+The page renders an empty <body> with id __next_error__.
+
+### Expected Behavior
+- When notFound() is invoked, Next.js should render the custom not-found.tsx component.
+- The HTTP status code returned to the client must be 404 instead of 200.
+
+### Environment
+Next.js canary 15.0
+      `;
+
+      const criteria = extractExplicitCriteria(body, 'https://github.com/vercel/next.js/issues/100596');
+
+      expect(criteria.length).toBeGreaterThanOrEqual(2);
+      expect(criteria[0].criterion_type).toBe('EXPLICIT');
+      expect(criteria[0].exact_quote).toBe('- When notFound() is invoked, Next.js should render the custom not-found.tsx component.');
+      expect(criteria[0].description).toBe('When notFound() is invoked, Next.js should render the custom not-found.tsx component.');
+      expect(criteria[1].criterion_type).toBe('EXPLICIT');
+      expect(criteria[1].exact_quote).toBe('- The HTTP status code returned to the client must be 404 instead of 200.');
+    });
+
+    it('generates a targeted maintainer handoff offering regression-test contribution when a linked PR exists', () => {
+      const metadataWithPr: GitHubIssueMetadata = {
+        ...baseMetadata,
+        has_linked_pr_signal: true,
+        linked_pr_reference: 'https://github.com/vercel/next.js/pull/9999',
+      };
+
+      const handoff = buildMaintainerHandoff(metadataWithPr, [], 'packages/next/src/client/not-found.tsx');
+
+      expect(handoff.clarification_question).toContain('https://github.com/vercel/next.js/pull/9999');
+      expect(handoff.clarification_question).toContain('contributing regression tests');
+      expect(handoff.triggering_ambiguity).toContain('Active pull request reference detected');
+      expect(handoff.user_edited).toBe(false);
+    });
   });
 });

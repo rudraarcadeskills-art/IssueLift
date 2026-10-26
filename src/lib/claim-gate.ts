@@ -73,8 +73,14 @@ export function runDeterministicClaimGate(
   const validatedCriteria: AcceptanceCriterion[] = rawCriteria.map((criterion, idx) => {
     const id = criterion.id || `AC-${String(idx + 1).padStart(2, '0')}`;
     
-    // Explicit vs Inferred
-    const isExplicit = criterion.criterion_type === 'EXPLICIT' && Boolean(criterion.exact_quote && criterion.exact_quote.trim().length > 0);
+    // Explicit vs Inferred: ensure exact quote actually exists in issue body or comments
+    const allIssueText = `${metadata.body}\n${(metadata.comments || []).map((c) => c.body).join('\n')}`.toLowerCase();
+    const quoteInBody = Boolean(
+      criterion.exact_quote &&
+      criterion.exact_quote.trim().length > 0 &&
+      allIssueText.includes(criterion.exact_quote.trim().toLowerCase())
+    );
+    const isExplicit = criterion.criterion_type === 'EXPLICIT' && quoteInBody;
     const criterion_type = isExplicit ? 'EXPLICIT' : 'AI-PROPOSED';
 
     // Validate Candidate Implementation Files
@@ -112,6 +118,7 @@ export function runDeterministicClaimGate(
           validatedTestFiles.push({
             ...tFile,
             verified_exists: true,
+            assertions_inspected: Boolean(tFile.assertions_inspected),
           });
         } else {
           rejectedPathsCount++;
@@ -120,16 +127,19 @@ export function runDeterministicClaimGate(
       }
 
       if (validatedTestFiles.length > 0) {
-        testStatus = 'TEST EVIDENCE FOUND';
-      } else if (testStatus === 'TEST EVIDENCE FOUND') {
-        // Demote if no actual verified test file
+        const hasInspected = validatedTestFiles.some((f) => f.assertions_inspected);
+        testStatus = hasInspected ? 'TEST EVIDENCE FOUND' : 'POSSIBLE TEST CANDIDATE';
+      } else {
         testStatus = 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
       }
     }
 
-    // Never state "tests exist" or "tests pass" without evidence
+    const hasInspectedAssertions = validatedTestFiles.some((f) => f.assertions_inspected);
+    // Never claim tests passed or executed without actual execution
     const rationale = testStatus === 'TEST EVIDENCE FOUND'
-      ? `Likely test candidates found in repository tree (${validatedTestFiles.map((f) => f.path).join(', ')}). Test execution has not occurred.`
+      ? `Located candidate test file(s) in repository tree (${validatedTestFiles.map((f) => f.path).join(', ')}). Test assertions inspected in bounded scan. Test execution has not occurred (security guardrail).`
+      : testStatus === 'POSSIBLE TEST CANDIDATE'
+      ? `Candidate test path(s) found in repository tree (${validatedTestFiles.map((f) => f.path).join(', ')}). Assertions not inspected; test execution has not occurred.`
       : testStatus === 'SCAN INCOMPLETE / UNKNOWN'
       ? 'Repository tree was truncated by GitHub API limit; test evidence scan is incomplete.'
       : 'No test evidence found in scanned files. Test coverage cannot be established from bounded context.';
@@ -146,6 +156,8 @@ export function runDeterministicClaimGate(
         proposed_manual_validation:
           criterion.test_evidence?.proposed_manual_validation ||
           'Verify locally by reproducing issue steps before and after changes.',
+        assertions_inspected: hasInspectedAssertions,
+        test_executed: false,
       },
     };
   });

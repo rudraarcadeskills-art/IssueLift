@@ -179,11 +179,25 @@ export function TraceMapRadar({
                                 <span className="truncate">{tFile.path}</span>
                                 <ExternalLink className="w-3 h-3 shrink-0" />
                               </a>
-                              <span className="text-[10px] text-teal-700 dark:text-teal-400/80 block mt-0.5">
-                                ✓ Found in scanned tree (not executed)
+                              <span className="text-[10px] block mt-0.5">
+                                {tFile.assertions_inspected ? (
+                                  <span className="text-teal-700 dark:text-teal-300 font-medium">
+                                    ✓ Test assertions inspected (not executed)
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-600 dark:text-slate-400">
+                                    ✓ Candidate path found in tree (not executed)
+                                  </span>
+                                )}
                               </span>
                             </div>
                           ))}
+                          <div className="pt-1 text-[10px] text-slate-500 dark:text-slate-400 border-t border-slate-200 dark:border-midnight-700/60 flex items-center justify-between">
+                            <span>Execution status:</span>
+                            <span className="font-mono text-amber-700 dark:text-amber-300 font-semibold">
+                              {c.test_evidence.test_executed ? 'Executed' : 'Not run (security invariant)'}
+                            </span>
+                          </div>
                         </div>
                       ) : (
                         <p className="text-xs text-coral-600 dark:text-coral-400 font-medium">

@@ -193,6 +193,30 @@ export async function fetchLiveIssueAndRepo(
     }
   }
 
+  // 3b. Fetch Timeline Events (bounded, first 15) to detect real linked PRs
+  let timelineEvents: any[] = [];
+  try {
+    const timelineRes = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/timeline?per_page=15`,
+      {
+        headers: {
+          ...headers,
+          Accept: 'application/vnd.github.mockingbird-preview+json, application/vnd.github.v3+json',
+        },
+        next: { revalidate: 60 },
+      }
+    );
+    if (timelineRes.ok) {
+      const rawEvents = await timelineRes.json();
+      if (Array.isArray(rawEvents)) {
+        timelineEvents = rawEvents;
+      }
+    }
+  } catch {
+    // Non-fatal, fallback to text scan
+  }
+
+  const prSignal = detectLinkedPrSignal(issueData.body || '', comments, timelineEvents);
   const checkedAt = new Date().toISOString();
 
   const metadata: GitHubIssueMetadata = {
@@ -223,10 +247,8 @@ export async function fetchLiveIssueAndRepo(
     })),
     comments_count: issueData.comments || 0,
     comments,
-    has_linked_pr_signal: Boolean(
-      issueData.timeline_url ||
-      (issueData.body && /pull request|fixes #|closes #|pr #/i.test(issueData.body))
-    ),
+    has_linked_pr_signal: prSignal.hasLinkedPr,
+    linked_pr_reference: prSignal.prReference,
     default_branch: defaultBranch,
     checked_at: checkedAt,
   };
@@ -422,16 +444,49 @@ export async function fetchLiveIssueAndRepo(
     });
   });
 
+  // Fetch bounded candidate test file contents (up to 3 files) to inspect assertions
+  const inspectedTestFilesSet = new Set<string>();
+  for (const testPath of topTestFiles.slice(0, 3)) {
+    try {
+      const testRes = await fetch(
+        `https://raw.githubusercontent.com/${owner}/${repo}/${defaultBranch}/${testPath}`,
+        { headers }
+      );
+      if (testRes.ok) {
+        const testContent = await testRes.text();
+        inspectedFiles.push(testPath);
+        inspectedTestFilesSet.add(testPath);
+
+        const hasAssertions = /expect\(|assert\b|\.should\b|\btest\(|\bit\(|\bdescribe\(|assert_eq!|t\.Run\(/i.test(testContent);
+
+        sources.push({
+          source_id: `test-content-${sources.length + 1}`,
+          canonical_url: `https://github.com/${owner}/${repo}/blob/${defaultBranch}/${testPath}`,
+          path: testPath,
+          source_type: 'test',
+          excerpt: testContent.slice(0, 300),
+          verified_exists: true,
+          verification_status: 'VERIFIED',
+        });
+      }
+    } catch {
+      // Non-fatal bounded inspection
+    }
+  }
+
+  // Include remaining test candidates as verified tree paths
   topTestFiles.forEach((testPath, i) => {
-    sources.push({
-      source_id: `test-file-${i + 1}`,
-      canonical_url: `https://github.com/${owner}/${repo}/blob/${defaultBranch}/${testPath}`,
-      path: testPath,
-      source_type: 'test',
-      excerpt: `Candidate test file identified in repository tree (${testPath})`,
-      verified_exists: true,
-      verification_status: 'VERIFIED',
-    });
+    if (!inspectedTestFilesSet.has(testPath)) {
+      sources.push({
+        source_id: `test-file-${i + 1}`,
+        canonical_url: `https://github.com/${owner}/${repo}/blob/${defaultBranch}/${testPath}`,
+        path: testPath,
+        source_type: 'test',
+        excerpt: `Candidate test file identified in repository tree (${testPath})`,
+        verified_exists: true,
+        verification_status: 'VERIFIED',
+      });
+    }
   });
 
   const scanBoundaries: ScanBoundaries = {
@@ -453,14 +508,135 @@ export async function fetchLiveIssueAndRepo(
   return result;
 }
 
+export interface LinkedPrSignalResult {
+  hasLinkedPr: boolean;
+  prReference?: string;
+  source: 'timeline_event' | 'explicit_pr_url' | 'issue_text' | 'none';
+}
+
+export function detectLinkedPrSignal(
+  issueBody: string = '',
+  comments: Array<{ body: string }> = [],
+  timelineEvents: any[] = []
+): LinkedPrSignalResult {
+  // 1. Inspect timeline events if available
+  if (Array.isArray(timelineEvents)) {
+    for (const ev of timelineEvents) {
+      if (!ev) continue;
+      if (ev.event === 'cross-referenced' && ev.source?.issue?.pull_request) {
+        const prUrl = ev.source.issue.html_url || `PR #${ev.source.issue.number}`;
+        return {
+          hasLinkedPr: true,
+          prReference: prUrl,
+          source: 'timeline_event',
+        };
+      }
+      if (ev.event === 'connected' && ev.source?.issue?.pull_request) {
+        const prUrl = ev.source.issue.html_url || `PR #${ev.source.issue.number}`;
+        return {
+          hasLinkedPr: true,
+          prReference: prUrl,
+          source: 'timeline_event',
+        };
+      }
+    }
+  }
+
+  // Combine issue body and comments
+  const texts = [issueBody, ...comments.map((c) => c.body || '')];
+  const combined = texts.join('\n');
+
+  // 2. Explicit GitHub Pull Request URLs (e.g. https://github.com/owner/repo/pull/123)
+  // Must NOT match issue URLs (/issues/123), commit URLs (/commit/abc), or unrelated domains
+  const prUrlMatch = combined.match(/https?:\/\/(?:www\.)?github\.com\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+\/pull\/(\d+)/i);
+  if (prUrlMatch) {
+    return {
+      hasLinkedPr: true,
+      prReference: prUrlMatch[0],
+      source: 'explicit_pr_url',
+    };
+  }
+
+  // 3. Explicit references like "PR #123", "pull request #123", "PR: #123"
+  const prTextMatch = combined.match(/(?:pull request|pr)\s*[:#]\s*(\d+)/i);
+  if (prTextMatch) {
+    return {
+      hasLinkedPr: true,
+      prReference: `PR #${prTextMatch[1]}`,
+      source: 'issue_text',
+    };
+  }
+
+  // 4. "in PR #123" or "addressed in PR #123"
+  const inPrMatch = combined.match(/\b(?:in|by)\s+(?:pr|pull\s+request)\s+#?(\d+)/i);
+  if (inPrMatch) {
+    return {
+      hasLinkedPr: true,
+      prReference: `PR #${inPrMatch[1]}`,
+      source: 'issue_text',
+    };
+  }
+
+  return {
+    hasLinkedPr: false,
+    source: 'none',
+  };
+}
+
 export function isLikelyTestFile(filePath: string): boolean {
-  const lower = filePath.toLowerCase();
-  return (
-    /(?:^|\/)(?:tests?|__tests__|e2e|specs?)\//i.test(lower) ||
+  if (!filePath || typeof filePath !== 'string') return false;
+  const lower = filePath.toLowerCase().replace(/\\/g, '/');
+
+  // 1. Exclude fixture directories, mocks, testdata, snapshot directories
+  // unless the file itself explicitly has a test or spec suffix (e.g. foo.test.ts)
+  const isFixtureOrMockDir = /(?:^|\/)(?:fixtures?|__fixtures__|mocks?|__mocks__|testdata|snapshots?|__snapshots__|samples?|test-fixtures)\//i.test(lower);
+  const hasExplicitTestSuffix =
     /\.(?:test|spec|_test)\.[a-z0-9]+$/i.test(lower) ||
-    /[._-]test\.[a-z0-9]+$/i.test(lower) ||
-    /[._-]spec\.[a-z0-9]+$/i.test(lower)
-  );
+    /[._-](?:test|spec)\.[a-z0-9]+$/i.test(lower) ||
+    /_test\.(?:go|py|rs)$/i.test(lower);
+
+  if (isFixtureOrMockDir && !hasExplicitTestSuffix) {
+    return false;
+  }
+
+  // 2. Exclude setup, config, helper, and harness files
+  const filename = lower.split('/').pop() || lower;
+  if (
+    /^(?:setup-?tests?|test-?setup|jest\.setup|vitest\.setup|test-?utils?|test-?helpers?|helpers?|conftest|fixtures?)\.[a-z0-9]+$/i.test(
+      filename
+    )
+  ) {
+    return false;
+  }
+
+  // 3. Exclude typical application component / page files that might live in a fixture or e2e app without a test suffix
+  if (
+    /^(?:page|layout|loading|not-found|error|route|template|head|default|middleware)\.(?:tsx|jsx|js|ts)$/i.test(
+      filename
+    ) &&
+    !hasExplicitTestSuffix
+  ) {
+    return false;
+  }
+
+  // 4. Positive matches: explicit test suffixes
+  if (hasExplicitTestSuffix) {
+    return true;
+  }
+
+  // 5. Files inside test/e2e/spec directories: must be an actual test script/suite
+  if (/(?:^|\/)(?:tests?|__tests__|e2e|specs?)\//i.test(lower)) {
+    // Only code extensions
+    if (/\.(?:ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|scala|php|cs|cpp|c)$/i.test(lower)) {
+      // Must not be in helper or fixture subpaths
+      if (/(?:fixtures?|mocks?|testdata|helpers?|utils?|samples?)\//i.test(lower)) {
+        return false;
+      }
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export type PackageManager = 'pnpm' | 'yarn' | 'npm' | 'bun' | 'cargo' | 'go' | 'pip' | 'poetry' | 'unknown';

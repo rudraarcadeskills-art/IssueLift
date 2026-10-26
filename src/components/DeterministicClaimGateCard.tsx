@@ -13,8 +13,8 @@ export function DeterministicClaimGateCard({ contract }: DeterministicClaimGateC
   const boundaries = contract.scan_boundaries;
 
   // Truthful metrics distinction
-  const inspectedFilesCount = contract.sources.filter(
-    (s) => s.verified_exists && (s.source_type === 'readme' || s.source_type === 'contributing' || s.source_type === 'manifest' || s.source_type === 'issue_body' || s.source_type === 'issue_comment')
+  const inspectedSourcesCount = contract.sources.filter(
+    (s) => s.verified_exists && s.source_id !== 'repo-tree'
   ).length;
 
   const candidateSourcePaths = new Set(
@@ -69,9 +69,9 @@ export function DeterministicClaimGateCard({ contract }: DeterministicClaimGateC
         </div>
 
         <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-midnight-900/60 border border-slate-200 dark:border-midnight-700">
-          <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-semibold">Inspected Files</p>
+          <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-semibold">Inspected Sources</p>
           <p className="text-xl font-bold font-mono text-slate-900 dark:text-slate-100 mt-1 flex items-center gap-1.5">
-            <span>{inspectedFilesCount}</span>
+            <span>{inspectedSourcesCount}</span>
             <CheckCircle2 className="w-3.5 h-3.5 text-teal-500 dark:text-teal-400" />
           </p>
           <p className="text-[10px] text-slate-500 mt-0.5">Contents fetched</p>
