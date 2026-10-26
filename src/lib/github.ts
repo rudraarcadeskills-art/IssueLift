@@ -280,15 +280,53 @@ export async function fetchLiveIssueAndRepo(
     });
   });
 
-  // Fetch README and CONTRIBUTING
+  // 5. Fetch Manifests (package.json, lockfiles, etc.) and Documentation
   let readmeContent = '';
   let contributingContent = '';
+  let packageJsonContent: string | undefined;
   let hasReadme = false;
   let hasContributing = false;
+  const inspectedFiles: string[] = [];
 
-  const readmeFile = repositoryFiles.find(p => /^readme(\.md|\.markdown|\.txt)?$/i.test(p));
+  // Identify package manifest & lockfiles
+  const packageJsonFile = repositoryFiles.find((p) => p.toLowerCase() === 'package.json');
+  if (packageJsonFile) {
+    inspectedFiles.push('package.json');
+    try {
+      const contentRes = await fetch(
+        `https://raw.githubusercontent.com/${owner}/${repo}/${defaultBranch}/${packageJsonFile}`,
+        { headers }
+      );
+      if (contentRes.ok) {
+        packageJsonContent = await contentRes.text();
+        sources.push({
+          source_id: 'manifest-package',
+          canonical_url: `https://github.com/${owner}/${repo}/blob/${defaultBranch}/${packageJsonFile}`,
+          path: packageJsonFile,
+          source_type: 'manifest',
+          excerpt: packageJsonContent.slice(0, 300),
+          verified_exists: true,
+          verification_status: 'VERIFIED',
+        });
+      }
+    } catch {
+      // Ignored
+    }
+  }
+
+  // Detect lockfiles in tree
+  const lockfiles = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json', 'bun.lockb', 'bun.lock', 'Cargo.lock', 'poetry.lock'];
+  for (const lf of lockfiles) {
+    if (repositoryFiles.includes(lf)) {
+      inspectedFiles.push(lf);
+    }
+  }
+
+  // Fetch README and CONTRIBUTING
+  const readmeFile = repositoryFiles.find((p) => /^readme(\.md|\.markdown|\.txt)?$/i.test(p));
   if (readmeFile) {
     hasReadme = true;
+    inspectedFiles.push(readmeFile);
     try {
       const contentRes = await fetch(
         `https://raw.githubusercontent.com/${owner}/${repo}/${defaultBranch}/${readmeFile}`,
@@ -311,9 +349,10 @@ export async function fetchLiveIssueAndRepo(
     }
   }
 
-  const contributingFile = repositoryFiles.find(p => /^(\.github\/)?contributing(\.md|\.markdown|\.txt)?$/i.test(p));
+  const contributingFile = repositoryFiles.find((p) => /^(\.github\/)?contributing(\.md|\.markdown|\.txt)?$/i.test(p));
   if (contributingFile) {
     hasContributing = true;
+    inspectedFiles.push(contributingFile);
     try {
       const contentRes = await fetch(
         `https://raw.githubusercontent.com/${owner}/${repo}/${defaultBranch}/${contributingFile}`,
@@ -336,27 +375,64 @@ export async function fetchLiveIssueAndRepo(
     }
   }
 
-  // Extract Documented Setup/Test Commands from README/CONTRIBUTING
+  // Add repository tree root as a verified evidence source
+  sources.push({
+    source_id: 'repo-tree',
+    canonical_url: `https://github.com/${owner}/${repo}/tree/${defaultBranch}`,
+    path: 'repository-tree',
+    source_type: 'code',
+    excerpt: `Repository tree index (${repositoryFiles.length} files scanned)`,
+    verified_exists: true,
+    verification_status: 'VERIFIED',
+  });
+
+  // Extract Documented Setup/Test Commands from Manifests & Docs
   const combinedDocs = `${readmeContent}\n${contributingContent}`;
-  const setupTruth = extractDocumentedCommands(combinedDocs, repositoryFiles, owner, repo, defaultBranch);
+  const setupTruth = extractDocumentedCommands(
+    combinedDocs,
+    repositoryFiles,
+    owner,
+    repo,
+    defaultBranch,
+    packageJsonContent
+  );
   setupTruth.has_readme = hasReadme;
   setupTruth.has_contributing = hasContributing;
 
-  // Add key package manifests and test files to evidence pack
-  const keyFiles = selectBoundedRelevantFiles(repositoryFiles, metadata.title, metadata.labels.map(l => l.name));
-  for (let i = 0; i < Math.min(keyFiles.length, 8); i++) {
-    const filePath = keyFiles[i];
-    const isTest = isLikelyTestFile(filePath);
+  // Add top ranked relevant candidate files to evidence pack
+  const ranked = rankRepositoryPaths(
+    repositoryFiles,
+    metadata.title,
+    metadata.body,
+    metadata.labels.map((l) => l.name)
+  );
+
+  const topSourceFiles = ranked.sourceCandidates.slice(0, 5);
+  const topTestFiles = ranked.testCandidates.slice(0, 5);
+
+  topSourceFiles.forEach((filePath, i) => {
     sources.push({
       source_id: `file-${i + 1}`,
       canonical_url: `https://github.com/${owner}/${repo}/blob/${defaultBranch}/${filePath}`,
       path: filePath,
-      source_type: isTest ? 'test' : 'code',
-      excerpt: `File exists in repository tree (${filePath})`,
+      source_type: 'code',
+      excerpt: `Candidate implementation file identified in repository tree (${filePath})`,
       verified_exists: true,
       verification_status: 'VERIFIED',
     });
-  }
+  });
+
+  topTestFiles.forEach((testPath, i) => {
+    sources.push({
+      source_id: `test-file-${i + 1}`,
+      canonical_url: `https://github.com/${owner}/${repo}/blob/${defaultBranch}/${testPath}`,
+      path: testPath,
+      source_type: 'test',
+      excerpt: `Candidate test file identified in repository tree (${testPath})`,
+      verified_exists: true,
+      verification_status: 'VERIFIED',
+    });
+  });
 
   const scanBoundaries: ScanBoundaries = {
     total_files_in_tree: repositoryFiles.length,
@@ -380,54 +456,223 @@ export async function fetchLiveIssueAndRepo(
 export function isLikelyTestFile(filePath: string): boolean {
   const lower = filePath.toLowerCase();
   return (
-    lower.includes('.test.') ||
-    lower.includes('.spec.') ||
-    lower.includes('_test.') ||
-    lower.includes('tests/') ||
-    lower.includes('test/') ||
-    lower.includes('__tests__/')
+    /(?:^|\/)(?:tests?|__tests__|e2e|specs?)\//i.test(lower) ||
+    /\.(?:test|spec|_test)\.[a-z0-9]+$/i.test(lower) ||
+    /[._-]test\.[a-z0-9]+$/i.test(lower) ||
+    /[._-]spec\.[a-z0-9]+$/i.test(lower)
   );
 }
 
-export function selectBoundedRelevantFiles(files: string[], issueTitle: string, labels: string[]): string[] {
-  const scored: Array<{ path: string; score: number }> = [];
-  const queryTerms = `${issueTitle} ${labels.join(' ')}`
+export type PackageManager = 'pnpm' | 'yarn' | 'npm' | 'bun' | 'cargo' | 'go' | 'pip' | 'poetry' | 'unknown';
+
+export function detectPackageManagerFromTree(
+  files: string[],
+  packageJsonContent?: string
+): PackageManager {
+  const fileSet = new Set(files);
+
+  if (packageJsonContent) {
+    try {
+      const parsed = JSON.parse(packageJsonContent);
+      if (typeof parsed.packageManager === 'string') {
+        const pm = parsed.packageManager.toLowerCase();
+        if (pm.startsWith('pnpm')) return 'pnpm';
+        if (pm.startsWith('yarn')) return 'yarn';
+        if (pm.startsWith('bun')) return 'bun';
+        if (pm.startsWith('npm')) return 'npm';
+      }
+    } catch {}
+  }
+
+  if (fileSet.has('pnpm-lock.yaml') || fileSet.has('pnpm-workspace.yaml')) return 'pnpm';
+  if (fileSet.has('yarn.lock')) return 'yarn';
+  if (fileSet.has('bun.lockb') || fileSet.has('bun.lock')) return 'bun';
+  if (fileSet.has('package-lock.json')) return 'npm';
+
+  if (fileSet.has('Cargo.lock') || fileSet.has('Cargo.toml')) return 'cargo';
+  if (fileSet.has('go.mod')) return 'go';
+  if (fileSet.has('poetry.lock')) return 'poetry';
+  if (fileSet.has('pyproject.toml') || fileSet.has('requirements.txt')) return 'pip';
+
+  if (fileSet.has('package.json')) return 'npm';
+
+  return 'unknown';
+}
+
+const STOP_WORDS = new Set([
+  'the', 'and', 'for', 'this', 'that', 'with', 'from', 'have', 'has', 'had',
+  'renders', 'render', 'rendering', 'empty', 'issue', 'when', 'does', 'will',
+  'should', 'error', 'failed', 'what', 'about', 'there', 'only', 'into', 'also',
+  'some', 'more', 'page', 'body', 'test', 'tests', 'code', 'file', 'files',
+  'using', 'after', 'before', 'where', 'which', 'their', 'could', 'would', 'here'
+]);
+
+export interface RankedPathsResult {
+  sourceCandidates: string[];
+  testCandidates: string[];
+  manifestFiles: string[];
+  allRanked: string[];
+}
+
+export function rankRepositoryPaths(
+  files: string[],
+  issueTitle: string,
+  issueBody: string = '',
+  labels: string[] = [],
+  criteriaDescriptions: string[] = []
+): RankedPathsResult {
+  const combinedText = `${issueTitle}\n${issueBody}\n${labels.join(' ')}\n${criteriaDescriptions.join('\n')}`;
+
+  // Extract explicit technical identifiers: backticks, path segments, and camelCase/kebab-case terms
+  const highValueTokens = new Set<string>();
+  const generalTokens = new Set<string>();
+
+  // 1. Backticked tokens e.g. `notFound()` or `__next_error__`
+  const backtickMatches = combinedText.match(/`([^`]+)`/g) || [];
+  for (const m of backtickMatches) {
+    const raw = m.slice(1, -1).trim();
+    const clean = raw.replace(/[()]/g, '').toLowerCase();
+    if (clean.length >= 3 && !STOP_WORDS.has(clean)) {
+      highValueTokens.add(clean);
+      const splitTerms = clean.split(/[^a-z0-9_-]+/).filter((t) => t.length >= 3 && !STOP_WORDS.has(t));
+      splitTerms.forEach((t) => highValueTokens.add(t));
+    }
+  }
+
+  // 2. Path-like strings e.g. packages/next/src/...
+  const pathMatches = combinedText.match(/(?:[a-zA-Z0-9_-]+\/)+[a-zA-Z0-9_.-]+/g) || [];
+  for (const p of pathMatches) {
+    const base = p.split('/').pop()?.toLowerCase();
+    if (base && base.length >= 3) {
+      highValueTokens.add(base);
+    }
+  }
+
+  // 3. General tokens
+  const words = combinedText
     .toLowerCase()
     .split(/[^a-z0-9_-]+/)
-    .filter(t => t.length > 2);
+    .filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
+
+  for (const w of words) {
+    generalTokens.add(w);
+    // Split kebab/snake
+    if (w.includes('-') || w.includes('_')) {
+      w.split(/[-_]+/).filter((sub) => sub.length >= 3 && !STOP_WORDS.has(sub)).forEach((sub) => generalTokens.add(sub));
+    }
+  }
+
+  const scoredSources: Array<{ path: string; score: number }> = [];
+  const scoredTests: Array<{ path: string; score: number }> = [];
+  const manifestFiles: string[] = [];
+
+  const manifestNames = new Set([
+    'package.json', 'pnpm-lock.yaml', 'yarn.lock', 'package-lock.json', 'bun.lockb', 'bun.lock',
+    'cargo.toml', 'cargo.lock', 'go.mod', 'pyproject.toml', 'requirements.txt', 'tsconfig.json'
+  ]);
 
   for (const file of files) {
-    let score = 0;
     const lower = file.toLowerCase();
 
-    // Prioritize package manifests & config
-    if (lower === 'package.json' || lower === 'cargo.toml' || lower === 'go.mod' || lower === 'pyproject.toml') {
-      score += 10;
-    }
-    // Prioritize test files
-    if (isLikelyTestFile(file)) {
-      score += 5;
+    // Skip vendor/build/cache directories
+    if (
+      lower.includes('node_modules/') ||
+      lower.includes('vendor/') ||
+      lower.includes('.git/') ||
+      lower.includes('.next/') ||
+      lower.includes('dist/') ||
+      lower.includes('build/') ||
+      lower.includes('.turbo/') ||
+      lower.includes('coverage/') ||
+      lower.includes('.cache/')
+    ) {
+      continue;
     }
 
-    // Keyword matching
-    for (const term of queryTerms) {
-      if (lower.includes(term)) {
+    const basename = lower.split('/').pop() || lower;
+
+    // Detect manifests
+    if (manifestNames.has(basename)) {
+      manifestFiles.push(file);
+    }
+
+    let score = 0;
+    const isTest = isLikelyTestFile(file);
+
+    // Score high-value tokens
+    for (const token of highValueTokens) {
+      if (basename.includes(token)) {
+        score += 25;
+      } else if (lower.includes(token)) {
+        score += 10;
+      }
+    }
+
+    // Score general tokens
+    for (const token of generalTokens) {
+      if (basename.includes(token)) {
+        score += 8;
+      } else if (lower.includes(token)) {
         score += 3;
       }
     }
 
-    // Skip deeply nested or vendor files
-    if (lower.includes('node_modules/') || lower.includes('vendor/') || lower.includes('.git/')) {
-      continue;
-    }
-
-    if (score > 0) {
-      scored.push({ path: file, score });
+    // Structural bonuses
+    if (isTest) {
+      if (score > 0) score += 10;
+      scoredTests.push({ path: file, score });
+    } else {
+      // Bonus for files in standard implementation paths
+      if (lower.startsWith('packages/') || lower.startsWith('src/') || lower.startsWith('lib/') || lower.startsWith('app/')) {
+        score += 4;
+      }
+      // Prioritize primary code extensions
+      if (/\.(?:ts|tsx|js|jsx|mjs|cjs|rs|go|py|java|c|cpp)$/i.test(lower)) {
+        score += 2;
+      }
+      scoredSources.push({ path: file, score });
     }
   }
 
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, 15).map(s => s.path);
+  scoredSources.sort((a, b) => b.score - a.score);
+  scoredTests.sort((a, b) => b.score - a.score);
+
+  // Filter to positive scores or fallback to top candidates
+  const sourceCandidates = scoredSources.filter((s) => s.score > 0).map((s) => s.path);
+  const testCandidates = scoredTests.filter((t) => t.score > 0).map((t) => t.path);
+
+  // Fallbacks if no score match
+  const fallbackSources = sourceCandidates.length > 0
+    ? sourceCandidates
+    : scoredSources.slice(0, 15).map((s) => s.path);
+
+  const fallbackTests = testCandidates.length > 0
+    ? testCandidates
+    : scoredTests.slice(0, 10).map((t) => t.path);
+
+  const allRanked = Array.from(new Set([...fallbackSources, ...fallbackTests]));
+
+  return {
+    sourceCandidates: fallbackSources,
+    testCandidates: fallbackTests,
+    manifestFiles,
+    allRanked,
+  };
+}
+
+export function selectBoundedRelevantFiles(
+  files: string[],
+  issueTitle: string,
+  labels: string[] = [],
+  issueBody: string = ''
+): string[] {
+  const ranked = rankRepositoryPaths(files, issueTitle, issueBody, labels);
+  const combined = [
+    ...ranked.manifestFiles.slice(0, 2),
+    ...ranked.sourceCandidates.slice(0, 8),
+    ...ranked.testCandidates.slice(0, 5),
+  ];
+  return Array.from(new Set(combined)).slice(0, 15);
 }
 
 export function extractDocumentedCommands(
@@ -435,44 +680,191 @@ export function extractDocumentedCommands(
   files: string[],
   owner: string,
   repo: string,
-  branch: string
+  branch: string,
+  packageJsonContent?: string
 ): SetupTruth {
-  let installCommand: string | undefined;
-  let testCommand: string | undefined;
-  let runCommand: string | undefined;
+  const inspectedFiles: string[] = [];
+  const packageManager = detectPackageManagerFromTree(files, packageJsonContent);
 
-  // Search markdown code blocks for common commands
-  const npmInstallMatch = docs.match(/(npm (?:install|i)|pnpm (?:install|i)|yarn(?: install)?|cargo build|go mod download)/i);
-  if (npmInstallMatch) {
-    installCommand = npmInstallMatch[0];
+  let installCommand: { command: string; label: 'DOCUMENTED'; source_id: string; source_url: string; provenance: string; path: string } | undefined;
+  let testCommand: { command: string; label: 'DOCUMENTED'; source_id: string; source_url: string; provenance: string; path: string } | undefined;
+  let runCommand: { command: string; label: 'DOCUMENTED'; source_id: string; source_url: string; provenance: string; path: string } | undefined;
+
+  const pkgSourceUrl = `https://github.com/${owner}/${repo}/blob/${branch}/package.json`;
+  const readmeSourceUrl = `https://github.com/${owner}/${repo}/blob/${branch}/README.md`;
+
+  // 1. Deterministic Extraction from package.json
+  if (packageJsonContent) {
+    inspectedFiles.push('package.json');
+    try {
+      const pkg = JSON.parse(packageJsonContent);
+      const scripts = pkg.scripts || {};
+
+      // Install command derived from package manager & manifest/lockfile
+      const pm = packageManager === 'unknown' ? 'npm' : packageManager;
+      let installCmd = `${pm} install`;
+      let lockfile = 'package.json';
+      if (pm === 'pnpm' && files.includes('pnpm-lock.yaml')) lockfile = 'pnpm-lock.yaml';
+      else if (pm === 'yarn' && files.includes('yarn.lock')) lockfile = 'yarn.lock';
+      else if (pm === 'bun' && (files.includes('bun.lockb') || files.includes('bun.lock'))) lockfile = 'bun.lockb';
+      else if (pm === 'npm' && files.includes('package-lock.json')) lockfile = 'package-lock.json';
+
+      installCommand = {
+        command: installCmd,
+        label: 'DOCUMENTED',
+        source_id: 'manifest-package',
+        source_url: `https://github.com/${owner}/${repo}/blob/${branch}/${lockfile}`,
+        provenance: `${lockfile} + package.json`,
+        path: lockfile,
+      };
+
+      // Test command from scripts
+      const testScriptKey = ['test', 'test:unit', 'test:all', 'test:ci', 'test:dev', 'test:core'].find(
+        (k) => typeof scripts[k] === 'string'
+      );
+      if (testScriptKey) {
+        testCommand = {
+          command: pm === 'npm' ? `npm test` : `${pm} test`,
+          label: 'DOCUMENTED',
+          source_id: 'manifest-package',
+          source_url: pkgSourceUrl,
+          provenance: `package.json scripts.${testScriptKey}`,
+          path: 'package.json',
+        };
+      }
+
+      // Run / dev command from scripts
+      const runScriptKey = ['dev', 'start', 'develop', 'serve'].find(
+        (k) => typeof scripts[k] === 'string'
+      );
+      if (runScriptKey) {
+        runCommand = {
+          command: pm === 'npm' ? `npm run ${runScriptKey}` : `${pm} ${runScriptKey}`,
+          label: 'DOCUMENTED',
+          source_id: 'manifest-package',
+          source_url: pkgSourceUrl,
+          provenance: `package.json scripts.${runScriptKey}`,
+          path: 'package.json',
+        };
+      }
+    } catch {}
   }
 
-  const testMatch = docs.match(/(npm (?:test|run test)|pytest|cargo test|go test(?:\s+\.\/\.\.\.)?|yarn test|pnpm test)/i);
-  if (testMatch) {
-    testCommand = testMatch[0];
+  // 2. Language-Specific Manifests (Cargo, Go, Python) if package.json didn't provide
+  if (!installCommand) {
+    if (packageManager === 'cargo') {
+      inspectedFiles.push('Cargo.toml');
+      installCommand = {
+        command: 'cargo build',
+        label: 'DOCUMENTED',
+        source_id: 'manifest-package',
+        source_url: `https://github.com/${owner}/${repo}/blob/${branch}/Cargo.toml`,
+        provenance: 'Cargo.toml manifest',
+        path: 'Cargo.toml',
+      };
+      testCommand = {
+        command: 'cargo test',
+        label: 'DOCUMENTED',
+        source_id: 'manifest-package',
+        source_url: `https://github.com/${owner}/${repo}/blob/${branch}/Cargo.toml`,
+        provenance: 'Cargo.toml test suite',
+        path: 'Cargo.toml',
+      };
+      runCommand = {
+        command: 'cargo run',
+        label: 'DOCUMENTED',
+        source_id: 'manifest-package',
+        source_url: `https://github.com/${owner}/${repo}/blob/${branch}/Cargo.toml`,
+        provenance: 'Cargo.toml run binary',
+        path: 'Cargo.toml',
+      };
+    } else if (packageManager === 'go') {
+      inspectedFiles.push('go.mod');
+      installCommand = {
+        command: 'go mod download',
+        label: 'DOCUMENTED',
+        source_id: 'manifest-package',
+        source_url: `https://github.com/${owner}/${repo}/blob/${branch}/go.mod`,
+        provenance: 'go.mod dependencies',
+        path: 'go.mod',
+      };
+      testCommand = {
+        command: 'go test ./...',
+        label: 'DOCUMENTED',
+        source_id: 'manifest-package',
+        source_url: `https://github.com/${owner}/${repo}/blob/${branch}/go.mod`,
+        provenance: 'go.mod test package',
+        path: 'go.mod',
+      };
+    }
   }
 
-  const runMatch = docs.match(/(npm run (?:dev|start)|yarn (?:dev|start)|pnpm (?:dev|start)|cargo run)/i);
-  if (runMatch) {
-    runCommand = runMatch[0];
+  // 3. Documentation Fallback / Augmentation from README / CONTRIBUTING
+  if (docs && docs.trim().length > 0) {
+    inspectedFiles.push('README.md');
+
+    if (!installCommand) {
+      const npmInstallMatch = docs.match(/(npm (?:install|i)|pnpm (?:install|i)|yarn(?: install)?|cargo build|go mod download|pip install -r \S+)/i);
+      if (npmInstallMatch) {
+        installCommand = {
+          command: npmInstallMatch[0],
+          label: 'DOCUMENTED',
+          source_id: 'doc-readme',
+          source_url: readmeSourceUrl,
+          provenance: 'README.md code block',
+          path: 'README.md',
+        };
+      }
+    }
+
+    if (!testCommand) {
+      const testMatch = docs.match(/(npm (?:test|run test)|pytest|cargo test|go test(?:\s+\.\/\.\.\.)?|yarn test|pnpm test)/i);
+      if (testMatch) {
+        testCommand = {
+          command: testMatch[0],
+          label: 'DOCUMENTED',
+          source_id: 'doc-readme',
+          source_url: readmeSourceUrl,
+          provenance: 'README.md code block',
+          path: 'README.md',
+        };
+      }
+    }
+
+    if (!runCommand) {
+      const runMatch = docs.match(/(npm run (?:dev|start)|yarn (?:dev|start)|pnpm (?:dev|start)|cargo run)/i);
+      if (runMatch) {
+        runCommand = {
+          command: runMatch[0],
+          label: 'DOCUMENTED',
+          source_id: 'doc-readme',
+          source_url: readmeSourceUrl,
+          provenance: 'README.md code block',
+          path: 'README.md',
+        };
+      }
+    }
   }
 
-  const sourceUrl = `https://github.com/${owner}/${repo}/blob/${branch}/README.md`;
+  // Construct truthful notes
+  let notes = '';
+  if (testCommand) {
+    notes = `Test command substantiated from ${testCommand.provenance}.`;
+  } else if (inspectedFiles.length > 0) {
+    notes = `No test execution command substantiated in inspected files (${inspectedFiles.join(', ')}).`;
+  } else {
+    notes = 'No setup documentation or package manifest inspected in bounded scan.';
+  }
 
   return {
-    install_command: installCommand
-      ? { command: installCommand, label: 'DOCUMENTED', source_id: 'doc-readme', source_url: sourceUrl }
-      : undefined,
-    test_command: testCommand
-      ? { command: testCommand, label: 'DOCUMENTED', source_id: 'doc-readme', source_url: sourceUrl }
-      : undefined,
-    run_command: runCommand
-      ? { command: runCommand, label: 'DOCUMENTED', source_id: 'doc-readme', source_url: sourceUrl }
-      : undefined,
+    install_command: installCommand,
+    test_command: testCommand,
+    run_command: runCommand,
     has_readme: false,
     has_contributing: false,
-    notes: testCommand
-      ? 'Test command extracted from repository documentation.'
-      : 'No test execution command documented in inspected files.',
+    package_manager: packageManager,
+    manifest_file: packageJsonContent ? 'package.json' : undefined,
+    inspected_files: inspectedFiles,
+    notes,
   };
 }

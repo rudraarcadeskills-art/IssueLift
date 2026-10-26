@@ -9,6 +9,7 @@ import {
   SourceEvidence,
 } from './types';
 import { getGemmaModel, isGemmaConfigured } from './config';
+import { rankRepositoryPaths } from './github';
 
 // Schema for Validated Gemma Output
 export const GemmaCriterionSchema = z.object({
@@ -278,8 +279,27 @@ export async function analyzeIssueWithGemma(
   const modelId = getGemmaModel();
   const apiKey = process.env.GEMMA_API_KEY!.trim();
 
-  // Bounded context construction
-  const candidateFileList = repositoryFiles.slice(0, 80).join('\n');
+  // Bounded context construction: rank full tree without truncation bias
+  const ranked = rankRepositoryPaths(
+    repositoryFiles,
+    metadata.title,
+    metadata.body,
+    metadata.labels.map((l) => l.name)
+  );
+
+  const keyCandidates = [
+    ...ranked.manifestFiles.slice(0, 5),
+    ...ranked.sourceCandidates.slice(0, 45),
+    ...ranked.testCandidates.slice(0, 30),
+  ];
+
+  const candidateFilesToPresent = keyCandidates.length > 0
+    ? Array.from(new Set(keyCandidates))
+    : repositoryFiles
+        .filter((f) => !f.includes('node_modules/') && !f.includes('.git/'))
+        .slice(0, 75);
+
+  const candidateFileList = candidateFilesToPresent.join('\n');
   const sourceSummaries = sources
     .slice(0, 10)
     .map((s) => `[ID: ${s.source_id}] (${s.source_type}) ${s.path}: ${s.excerpt.replace(/\n/g, ' ')}`)

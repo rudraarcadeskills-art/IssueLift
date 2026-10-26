@@ -12,7 +12,24 @@ export function DeterministicClaimGateCard({ contract }: DeterministicClaimGateC
   const audit = contract.claim_gate_audit;
   const boundaries = contract.scan_boundaries;
 
-  const verifiedSourcesCount = contract.sources.filter((s) => s.verified_exists).length;
+  // Truthful metrics distinction
+  const inspectedFilesCount = contract.sources.filter(
+    (s) => s.verified_exists && (s.source_type === 'readme' || s.source_type === 'contributing' || s.source_type === 'manifest' || s.source_type === 'issue_body' || s.source_type === 'issue_comment')
+  ).length;
+
+  const candidateSourcePaths = new Set(
+    contract.criteria.flatMap((c) => c.candidate_implementation_files.map((f) => f.path))
+  );
+
+  const testEvidencePaths = new Set(
+    contract.criteria.flatMap((c) => c.test_evidence.candidate_test_files.map((t) => t.path))
+  );
+
+  const manifestCommandsCount = [
+    contract.setup_truth.install_command,
+    contract.setup_truth.test_command,
+    contract.setup_truth.run_command,
+  ].filter(Boolean).length;
 
   return (
     <div className="w-full bg-white dark:bg-midnight-800/90 border border-slate-200 dark:border-midnight-700 rounded-2xl shadow-card dark:shadow-card-dark p-5 sm:p-7 space-y-6">
@@ -39,46 +56,62 @@ export function DeterministicClaimGateCard({ contract }: DeterministicClaimGateC
         </div>
       </div>
 
-      {/* Metrics Row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="p-4 rounded-xl bg-slate-50 dark:bg-midnight-900/60 border border-slate-200 dark:border-midnight-700">
-          <p className="text-[11px] text-slate-500 dark:text-slate-400 uppercase font-semibold">Verified Sources</p>
-          <p className="text-2xl font-bold font-mono text-slate-900 dark:text-slate-100 mt-1 flex items-center gap-2">
-            <span>{verifiedSourcesCount}</span>
-            <CheckCircle2 className="w-4 h-4 text-teal-500 dark:text-teal-400" />
+      {/* Truthful Metrics Breakdown Grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-midnight-900/60 border border-slate-200 dark:border-midnight-700">
+          <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-semibold">Repo Tree Files</p>
+          <p className="text-xl font-bold font-mono text-slate-900 dark:text-slate-100 mt-1">
+            {boundaries.total_files_in_tree.toLocaleString()}
           </p>
-          <p className="text-[11px] text-slate-500 mt-1">Confirmed in repo evidence</p>
-        </div>
-
-        <div className="p-4 rounded-xl bg-slate-50 dark:bg-midnight-900/60 border border-slate-200 dark:border-midnight-700">
-          <p className="text-[11px] text-slate-500 dark:text-slate-400 uppercase font-semibold">Repo Tree Files</p>
-          <p className="text-2xl font-bold font-mono text-slate-900 dark:text-slate-100 mt-1">
-            {boundaries.total_files_in_tree}
-          </p>
-          <p className="text-[11px] text-slate-500 mt-1">
-            {boundaries.is_tree_truncated ? 'Truncated by API' : 'Full tree indexed'}
+          <p className="text-[10px] text-slate-500 mt-0.5">
+            {boundaries.is_tree_truncated ? 'Truncated by API' : 'Indexed in tree'}
           </p>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-50 dark:bg-midnight-900/60 border border-slate-200 dark:border-midnight-700">
-          <p className="text-[11px] text-slate-500 dark:text-slate-400 uppercase font-semibold">Rejected Paths</p>
-          <p className="text-2xl font-bold font-mono text-slate-900 dark:text-slate-100 mt-1 flex items-center gap-2">
+        <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-midnight-900/60 border border-slate-200 dark:border-midnight-700">
+          <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-semibold">Inspected Files</p>
+          <p className="text-xl font-bold font-mono text-slate-900 dark:text-slate-100 mt-1 flex items-center gap-1.5">
+            <span>{inspectedFilesCount}</span>
+            <CheckCircle2 className="w-3.5 h-3.5 text-teal-500 dark:text-teal-400" />
+          </p>
+          <p className="text-[10px] text-slate-500 mt-0.5">Contents fetched</p>
+        </div>
+
+        <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-midnight-900/60 border border-slate-200 dark:border-midnight-700">
+          <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-semibold">Candidate Sources</p>
+          <p className="text-xl font-bold font-mono text-sky-600 dark:text-sky-400 mt-1">
+            {candidateSourcePaths.size}
+          </p>
+          <p className="text-[10px] text-slate-500 mt-0.5">Inferred relevant</p>
+        </div>
+
+        <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-midnight-900/60 border border-slate-200 dark:border-midnight-700">
+          <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-semibold">Test Candidates</p>
+          <p className="text-xl font-bold font-mono text-teal-600 dark:text-teal-400 mt-1">
+            {testEvidencePaths.size}
+          </p>
+          <p className="text-[10px] text-slate-500 mt-0.5">Automated tests</p>
+        </div>
+
+        <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-midnight-900/60 border border-slate-200 dark:border-midnight-700">
+          <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-semibold">Manifest Cmds</p>
+          <p className="text-xl font-bold font-mono text-violet-600 dark:text-violet-400 mt-1">
+            {manifestCommandsCount} / 3
+          </p>
+          <p className="text-[10px] text-slate-500 mt-0.5">Substantiated</p>
+        </div>
+
+        <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-midnight-900/60 border border-slate-200 dark:border-midnight-700">
+          <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-semibold">Rejected Paths</p>
+          <p className="text-xl font-bold font-mono text-slate-900 dark:text-slate-100 mt-1 flex items-center gap-1.5">
             <span>{audit.rejected_paths_count}</span>
             {audit.rejected_paths_count > 0 ? (
-              <XCircle className="w-4 h-4 text-coral-500 dark:text-coral-400" />
+              <XCircle className="w-3.5 h-3.5 text-coral-500 dark:text-coral-400" />
             ) : (
-              <CheckCircle2 className="w-4 h-4 text-teal-500 dark:text-teal-400" />
+              <CheckCircle2 className="w-3.5 h-3.5 text-teal-500 dark:text-teal-400" />
             )}
           </p>
-          <p className="text-[11px] text-slate-500 mt-1">Hallucinations blocked</p>
-        </div>
-
-        <div className="p-4 rounded-xl bg-slate-50 dark:bg-midnight-900/60 border border-slate-200 dark:border-midnight-700">
-          <p className="text-[11px] text-slate-500 dark:text-slate-400 uppercase font-semibold">ProofBench Invariants</p>
-          <p className="text-2xl font-bold font-mono text-violet-600 dark:text-violet-400 mt-1">
-            7 / 7
-          </p>
-          <p className="text-[11px] text-slate-500 mt-1">Offline fixture verified</p>
+          <p className="text-[10px] text-slate-500 mt-0.5">Hallucinations blocked</p>
         </div>
       </div>
 

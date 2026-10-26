@@ -81,23 +81,35 @@ export function SetupTruthCard({ setupTruth }: SetupTruthCardProps) {
             </div>
 
             {c.info ? (
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-100 dark:bg-midnight-950/90 border border-slate-200 dark:border-midnight-700/80 font-mono text-xs text-slate-800 dark:text-slate-200">
-                <span className="truncate pr-2 select-all">{c.info.command}</span>
-                <button
-                  onClick={() => copyToClipboard(c.info!.command, c.key)}
-                  className="p-1.5 rounded hover:bg-slate-200 dark:hover:bg-midnight-800 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors cursor-pointer shrink-0"
-                  title="Copy command"
-                >
-                  {copiedCmd === c.key ? (
-                    <Check className="w-3.5 h-3.5 text-teal-500 dark:text-teal-400" />
-                  ) : (
-                    <Copy className="w-3.5 h-3.5" />
-                  )}
-                </button>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-100 dark:bg-midnight-950/90 border border-slate-200 dark:border-midnight-700/80 font-mono text-xs text-slate-800 dark:text-slate-200">
+                  <span className="truncate pr-2 select-all">{c.info.command}</span>
+                  <button
+                    onClick={() => copyToClipboard(c.info!.command, c.key)}
+                    className="p-1.5 rounded hover:bg-slate-200 dark:hover:bg-midnight-800 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors cursor-pointer shrink-0"
+                    title="Copy command"
+                  >
+                    {copiedCmd === c.key ? (
+                      <Check className="w-3.5 h-3.5 text-teal-500 dark:text-teal-400" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
+                {c.info.provenance && (
+                  <p className="text-[10px] font-mono text-slate-500 dark:text-slate-400">
+                    Source: <span className="text-slate-700 dark:text-slate-300 font-semibold">{c.info.provenance}</span>
+                  </p>
+                )}
               </div>
             ) : (
-              <div className="p-2.5 rounded-lg bg-slate-100/60 dark:bg-midnight-950/40 border border-slate-200 dark:border-midnight-800 text-xs text-slate-500 italic">
-                No command found in inspected files.
+              <div className="p-2.5 rounded-lg bg-slate-100/60 dark:bg-midnight-950/40 border border-slate-200 dark:border-midnight-800 text-xs text-slate-500 italic space-y-1">
+                <p>No command substantiated in inspected files.</p>
+                {setupTruth.inspected_files && setupTruth.inspected_files.length > 0 && (
+                  <p className="text-[10px] font-mono text-slate-400 not-italic">
+                    Inspected: {setupTruth.inspected_files.join(', ')}
+                  </p>
+                )}
               </div>
             )}
 
@@ -108,7 +120,7 @@ export function SetupTruthCard({ setupTruth }: SetupTruthCardProps) {
                 rel="noopener noreferrer"
                 className="text-[11px] text-sky-600 dark:text-sky-400 hover:text-sky-800 dark:hover:text-sky-300 hover:underline flex items-center gap-1 font-medium pt-1"
               >
-                <span>View source in repository</span>
+                <span>Evidence File: {c.info.path || 'Repository Manifest'}</span>
                 <ExternalLink className="w-3 h-3" />
               </a>
             )}

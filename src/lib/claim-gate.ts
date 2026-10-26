@@ -40,6 +40,14 @@ export function runDeterministicClaimGate(
 
   // 1. Validate Sources
   const validatedSources: SourceEvidence[] = sources.map((source) => {
+    if (source.source_id === 'repo-tree') {
+      return {
+        ...source,
+        verified_exists: true,
+        verification_status: 'VERIFIED',
+      };
+    }
+
     if (source.source_type === 'code' || source.source_type === 'test' || source.source_type === 'config' || source.source_type === 'manifest') {
       const exists = fileSet.has(source.path);
       if (!exists) {

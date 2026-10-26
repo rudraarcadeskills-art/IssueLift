@@ -11,7 +11,7 @@ import {
 } from './types';
 import { analyzeIssueWithGemma } from './gemma';
 import { runDeterministicClaimGate } from './claim-gate';
-import { isLikelyTestFile } from './github';
+import { isLikelyTestFile, rankRepositoryPaths } from './github';
 
 export async function compileContributionContract(
   metadata: GitHubIssueMetadata,
@@ -31,35 +31,104 @@ export async function compileContributionContract(
   if (gemmaResult.success) {
     const aiData = gemmaResult.data;
 
+    // Rank repository paths across the full tree for fallback / backfill
+    const ranked = rankRepositoryPaths(
+      repositoryFiles,
+      metadata.title,
+      metadata.body,
+      metadata.labels.map((l) => l.name)
+    );
+
     // Convert AI criteria to AcceptanceCriterion format
-    const rawCriteria: AcceptanceCriterion[] = aiData.criteria.map((c, idx) => ({
-      id: c.id || `AC-${String(idx + 1).padStart(2, '0')}`,
-      description: c.description,
-      criterion_type: c.criterion_type,
-      exact_quote: c.exact_quote,
-      source_url: metadata.url,
-      status: c.status,
-      status_rationale: c.status_rationale,
-      needs_maintainer_clarification: c.status === 'AMBIGUOUS' || c.status === 'NOT_SPECIFIED',
-      candidate_implementation_files: c.candidate_files.map((f) => ({
+    const rawCriteria: AcceptanceCriterion[] = aiData.criteria.map((c, idx) => {
+      const id = c.id || `AC-${String(idx + 1).padStart(2, '0')}`;
+
+      // Candidate implementation files: preserve AI proposed or map from ranked tree
+      let candidateImplFiles: CandidateFile[] = (c.candidate_files || []).map((f) => ({
         path: f.path,
         relevance_rationale: f.relevance_rationale,
         source_id: f.source_id,
         verified_exists: false, // Claim gate will verify
         relevance_status: 'AI-INFERRED',
-      })),
-      test_evidence: {
-        status: c.test_evidence.status as TestEvidenceStatus,
-        candidate_test_files: c.test_evidence.candidate_test_files.map((t) => ({
-          path: t.path,
-          source_id: t.source_id,
-          verified_exists: false,
-        })),
-        rationale: c.test_evidence.rationale,
-        proposed_manual_validation: c.test_evidence.proposed_manual_validation,
-      },
-      test_command: setupTruth.test_command,
-    }));
+      }));
+
+      if (candidateImplFiles.length === 0 && ranked.sourceCandidates.length > 0) {
+        const critRanked = rankRepositoryPaths(
+          repositoryFiles,
+          c.description,
+          metadata.body,
+          metadata.labels.map((l) => l.name)
+        );
+        const topSources = critRanked.sourceCandidates.length > 0
+          ? critRanked.sourceCandidates.slice(0, 2)
+          : ranked.sourceCandidates.slice(0, 2);
+
+        candidateImplFiles = topSources.map((p) => ({
+          path: p,
+          relevance_rationale: `Candidate source file mapped from repository tree tokens matching criterion`,
+          source_id: 'repo-tree',
+          verified_exists: true,
+          relevance_status: 'AI-INFERRED',
+        }));
+      }
+
+      // Test evidence: preserve AI proposed or map from ranked tree
+      let candidateTestFiles = (c.test_evidence?.candidate_test_files || []).map((t) => ({
+        path: t.path,
+        source_id: t.source_id,
+        verified_exists: false,
+      }));
+
+      let testEvidenceStatus: TestEvidenceStatus = (c.test_evidence?.status as TestEvidenceStatus) || 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
+
+      if (candidateTestFiles.length === 0 && ranked.testCandidates.length > 0) {
+        const critRanked = rankRepositoryPaths(
+          repositoryFiles,
+          c.description,
+          metadata.body,
+          metadata.labels.map((l) => l.name)
+        );
+        const topTests = critRanked.testCandidates.length > 0
+          ? critRanked.testCandidates.slice(0, 2)
+          : ranked.testCandidates.slice(0, 2);
+
+        if (topTests.length > 0) {
+          candidateTestFiles = topTests.map((p) => ({
+            path: p,
+            source_id: 'repo-tree',
+            verified_exists: true,
+          }));
+          testEvidenceStatus = scanBoundaries.is_tree_truncated
+            ? 'SCAN INCOMPLETE / UNKNOWN'
+            : 'TEST EVIDENCE FOUND';
+        }
+      }
+
+      const defaultRationale = candidateTestFiles.length > 0
+        ? `Located candidate test file(s) in repository tree (${candidateTestFiles.map((t) => t.path).join(', ')}). Test execution has not occurred.`
+        : scanBoundaries.is_tree_truncated
+        ? 'Repository tree was truncated by GitHub API limit; test evidence scan is incomplete.'
+        : 'No test evidence found in scanned files. Test coverage cannot be established from bounded context.';
+
+      return {
+        id,
+        description: c.description,
+        criterion_type: c.criterion_type,
+        exact_quote: c.exact_quote,
+        source_url: metadata.url,
+        status: c.status,
+        status_rationale: c.status_rationale,
+        needs_maintainer_clarification: c.status === 'AMBIGUOUS' || c.status === 'NOT_SPECIFIED',
+        candidate_implementation_files: candidateImplFiles,
+        test_evidence: {
+          status: testEvidenceStatus,
+          candidate_test_files: candidateTestFiles,
+          rationale: c.test_evidence?.rationale || defaultRationale,
+          proposed_manual_validation: c.test_evidence?.proposed_manual_validation || `Verify "${c.description}" locally before opening pull request.`,
+        },
+        test_command: setupTruth.test_command,
+      };
+    });
 
     // Run Deterministic Claim Gate
     const claimGateResult = runDeterministicClaimGate(
@@ -162,11 +231,15 @@ export function compileDeterministicBaselineContract(
     });
   }
 
-  // Populate candidate files from repo tree
-  const potentialTestFiles = repositoryFiles.filter(isLikelyTestFile).slice(0, 3);
-  const potentialSourceFiles = repositoryFiles
-    .filter((f) => !isLikelyTestFile(f) && (f.endsWith('.ts') || f.endsWith('.js') || f.endsWith('.py') || f.endsWith('.go') || f.endsWith('.rs')))
-    .slice(0, 3);
+  // Populate candidate files from ranked repo tree
+  const ranked = rankRepositoryPaths(
+    repositoryFiles,
+    metadata.title,
+    metadata.body,
+    metadata.labels.map((l) => l.name)
+  );
+  const potentialSourceFiles = ranked.sourceCandidates.slice(0, 3);
+  const potentialTestFiles = ranked.testCandidates.slice(0, 3);
 
   criteria.forEach((c) => {
     c.candidate_implementation_files = potentialSourceFiles.map((p) => ({

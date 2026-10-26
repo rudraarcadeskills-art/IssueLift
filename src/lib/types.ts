@@ -59,6 +59,8 @@ export interface CommandInfo {
   label: CommandLabel;
   source_id?: string;
   source_url?: string;
+  provenance?: string;
+  path?: string;
 }
 
 export interface AcceptanceCriterion {
@@ -82,6 +84,9 @@ export interface SetupTruth {
   run_command?: CommandInfo;
   has_readme: boolean;
   has_contributing: boolean;
+  package_manager?: 'pnpm' | 'yarn' | 'npm' | 'bun' | 'cargo' | 'go' | 'pip' | 'poetry' | 'unknown';
+  manifest_file?: string;
+  inspected_files?: string[];
   notes: string;
 }
 

@@ -42,7 +42,7 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [contract, setContract] = useState<ContributionContract | null>(null);
   const [isExportOpen, setIsExportOpen] = useState(false);
-  const [isGemmaConfigured, setIsGemmaConfigured] = useState<boolean>(false);
+  const [gemmaConfigState, setGemmaConfigState] = useState<'checking' | 'configured' | 'missing'>('checking');
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(false);
 
   useEffect(() => {
@@ -53,10 +53,14 @@ export default function HomePage() {
       })
       .then((data) => {
         if (data?.gemma?.configured) {
-          setIsGemmaConfigured(true);
+          setGemmaConfigState('configured');
+        } else {
+          setGemmaConfigState('missing');
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        setGemmaConfigState('missing');
+      });
   }, []);
 
   const handleScan = async (url: string) => {
@@ -94,7 +98,7 @@ export default function HomePage() {
       setScanStage('complete');
 
       if (contractData.ai_configured) {
-        setIsGemmaConfigured(true);
+        setGemmaConfigState('configured');
       }
     } catch (err: any) {
       setError(err.message || 'An unexpected error occurred while scanning the issue.');
@@ -132,7 +136,7 @@ export default function HomePage() {
       <Header
         activeView={activeView}
         onSelectView={setActiveView}
-        isGemmaActive={contract?.ai_configured || isGemmaConfigured}
+        isGemmaActive={contract?.ai_configured || gemmaConfigState === 'configured'}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 space-y-10">
@@ -260,7 +264,7 @@ export default function HomePage() {
             <ScanProgressBar currentStage={scanStage} />
 
             {/* Missing Key Guidance Banner (only if unconfigured and not dismissed) */}
-            {!isGemmaConfigured && !bannerDismissed && (
+            {gemmaConfigState === 'missing' && !bannerDismissed && (
               <MissingKeyBanner onDismiss={() => setBannerDismissed(true)} />
             )}
 

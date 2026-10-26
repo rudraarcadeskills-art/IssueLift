@@ -10,6 +10,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "eval": "node scripts/run-proofbench.mjs",
     "eval:proofbench": "node scripts/run-proofbench.mjs",
     "generate:pptx": "node scripts/generate-deck.mjs"
   },

@@ -26,15 +26,15 @@ You paste any public GitHub issue URL. IssueLift inspects the issue metadata, fe
 
 ---
 
-## 2. Product Screenshots
+## 2. Interactive Workspace & Pre-Implementation Flow
 
-| Landing Page & Intake Hero | Acceptance-to-Test TraceMap |
-| :---: | :---: |
-| ![Landing Hero](docs/screenshots/01-landing-hero.jpg) | ![TraceMap Radar](docs/screenshots/02-tracemap-results.jpg) |
+IssueLift delivers a live, interactive developer workspace organized into five focused stages:
 
-| Open ProofBench Suite (7/7 Passing) |
-| :---: |
-| ![ProofBench Suite](docs/screenshots/03-proofbench-suite.jpg) |
+1. **Intake & Bounded Scan:** Paste any public GitHub issue URL. IssueLift validates the issue status, checks for existing PR signals, indexes the repository tree, and safely fetches manifests (`package.json`, lockfiles) and documentation (`README.md`, `CONTRIBUTING.md`).
+2. **Setup Truth Ledger:** Extracts verified development, build, test, and install commands directly from package manifests and lockfiles (`pnpm`, `yarn`, `npm`, `bun`, `cargo`, `go`). Commands display exact provenance files rather than AI guesses.
+3. **Evidence-Backed Contribution Contract:** Deconstructs issue discussions into discrete criteria (`AC-01`, `AC-02`...). Verbatim requirements retain clickable links to GitHub. AI proposals are quarantined with `AI-PROPOSED` tags and support in-memory editing.
+4. **Acceptance-to-Test TraceMap & Gap Radar:** Traverses the entire indexed repository tree without truncation bias. Maps each criterion to verified candidate source files, candidate test files, and substantiated test commands. When no test candidate exists, flags an honest Test Gap with manual reproduction steps.
+5. **Deterministic Claim Gate & Proof Bundle:** Enforces strict security invariants: every candidate file path must exist in the repository tree. Hallucinations are rejected and logged in the truth ledger. Exports a verifiable Markdown or JSON Proof Bundle before you write a single line of code.
 
 ---
 
@@ -126,8 +126,8 @@ Detailed architectural specifications, threat models, and validation invariants 
 ### Installation & Local Run
 ```bash
 # 1. Clone repository
-git clone https://github.com/your-username/issuelift.git
-cd issuelift
+git clone https://github.com/rudraarcadeskills-art/IssueLift.git
+cd IssueLift
 
 # 2. Install dependencies
 npm install
@@ -152,6 +152,7 @@ IssueLift runs out-of-the-box with its deterministic baseline compiler. To activ
    ```bash
    GEMMA_API_KEY=your_copied_api_key_here
    GEMMA_MODEL=gemma-4-26b-a4b-it
+   # Optional: GITHUB_TOKEN=your_github_token_for_rate_limits
    ```
 3. Restart the server. The status indicator will flip to **Live Gemma 4**.
 *Note: Never prefix with `NEXT_PUBLIC_`. Keep `.env.local` strictly server-side and ignored by Git.*
@@ -161,17 +162,21 @@ IssueLift runs out-of-the-box with its deterministic baseline compiler. To activ
 ## 9. Verification & Testing Commands
 
 ```bash
-# Run unit test suite (10/10 tests)
+# Run unit and regression test suite
 npm test
 
 # Run deterministic ProofBench evaluation suite (7/7 fixtures, zero API key required)
-npm run eval:proofbench
+npm run eval
+# (or: npm run eval:proofbench)
 
-# Generate editable 8-slide presentation deck
-npm run generate:pptx
+# Verify TypeScript types
+npm run typecheck
 
-# Verify TypeScript types and production build
+# Verify production Next.js build
 npm run build
+
+# Generate editable presentation deck
+npm run generate:pptx
 ```
 
 ---
