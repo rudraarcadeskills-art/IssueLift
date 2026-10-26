@@ -1,0 +1,65 @@
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
+
+@layer base {
+  :root {
+    --canvas: #F7F6FF;
+    --ink: #17152D;
+    --electric-indigo: #7057F5;
+    --electric-blue: #477BFF;
+    --verified-teal: #26C7C9;
+    --caution-coral: #FF7268;
+    --progress-lime: #C9F27A;
+  }
+
+  body {
+    background-color: #F7F6FF;
+    color: #17152D;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #F0EEFC;
+}
+::-webkit-scrollbar-thumb {
+  background: #C4BFEC;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #A29BD6;
+}
+
+/* Glassmorphism surfaces */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(226, 223, 244, 0.8);
+}
+
+.gradient-hero {
+  background: radial-gradient(130% 100% at 50% 0%, rgba(112, 87, 245, 0.12) 0%, rgba(71, 123, 255, 0.06) 45%, rgba(247, 246, 255, 0) 100%);
+}
+
+.gradient-accent {
+  background: linear-gradient(135deg, #7057F5 0%, #477BFF 100%);
+}
+
+/* Pulse animation for active scanning */
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.02); }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s infinite ease-in-out;
+}
