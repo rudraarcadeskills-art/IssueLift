@@ -1,6 +1,7 @@
 import {
   AcceptanceCriterion,
   CandidateFile,
+  CandidateTestFile,
   ContributionContract,
   GitHubIssueMetadata,
   MaintainerHandoff,
@@ -11,7 +12,13 @@ import {
 } from './types';
 import { analyzeIssueWithGemma } from './gemma';
 import { runDeterministicClaimGate } from './claim-gate';
-import { isLikelyTestFile, rankRepositoryPaths } from './github';
+import {
+  evaluateTestRelevance,
+  extractReproductionEnvironment,
+  isLikelyTestFile,
+  rankRepositoryPaths,
+} from './github';
+import { isGemmaConfigured } from './config';
 
 export function extractExplicitCriteria(
   body: string,
@@ -23,41 +30,79 @@ export function extractExplicitCriteria(
   const criteria: AcceptanceCriterion[] = [];
   const lines = body.split('\n');
 
-  // 1. Look for explicit Expected Behavior / Acceptance Criteria section
-  const sectionHeaderRegex = /^#{1,4}\s*(?:expected\s+(?:behavior|result|outcome)|acceptance\s+criteria|what\s+should\s+happen\??)/i;
+  // Regex to detect reproduction sections that should NEVER yield acceptance criteria
+  const reproSectionRegex = /^#{1,4}\s*(?:to\s+reproduce|steps\s+to\s+reproduce|how\s+to\s+reproduce|reproduction\s+steps)/i;
+  // Regex to detect expected behavior / acceptance criteria sections
+  const expectedSectionRegex = /^#{1,4}\s*(?:.*?(?:expected\s+(?:behavior|result|outcome|behaviour)|acceptance\s+criteria|definition\s+of\s+done|what\s+should\s+happen\??)|expected(?:\s*[:\-])?$)/i;
+
   let inExpectedSection = false;
+  let inReproSection = false;
   const expectedSectionLines: string[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i];
     const trimmed = rawLine.trim();
 
-    if (sectionHeaderRegex.test(trimmed)) {
-      inExpectedSection = true;
+    if (reproSectionRegex.test(trimmed)) {
+      inReproSection = true;
+      inExpectedSection = false;
       continue;
     }
 
-    if (inExpectedSection) {
-      if (/^#{1,4}\s+/.test(trimmed)) {
-        inExpectedSection = false;
-      } else if (trimmed.length > 0) {
-        expectedSectionLines.push(trimmed);
-      }
+    if (expectedSectionRegex.test(trimmed)) {
+      inExpectedSection = true;
+      inReproSection = false;
+      continue;
+    }
+
+    if (trimmed.startsWith('#')) {
+      inExpectedSection = false;
+      inReproSection = false;
+      continue;
+    }
+
+    if (inExpectedSection && trimmed.length > 0) {
+      expectedSectionLines.push(trimmed);
     }
   }
 
-  // If explicit expected section exists, extract criteria from it
+  // 1. If inside an expected section (e.g. "Current vs. Expected behavior" or "Expected Behavior")
   if (expectedSectionLines.length > 0) {
-    let idx = 0;
-    for (const line of expectedSectionLines) {
-      const clean = line.replace(/^(- \[[ x]\]|\* |- |\d+\. )/, '').trim();
-      if (clean.length > 5) {
-        idx++;
+    // Check if section contains Current vs Expected pattern
+    const hasCurrentMarker = expectedSectionLines.some((l) => /^\s*\*{0,2}current(?:\s+behavior)?:\*{0,2}\s*$/i.test(l));
+    const hasExpectedMarker = expectedSectionLines.some((l) => /^\s*\*{0,2}expected(?:\s+behavior)?:\*{0,2}/i.test(l));
+
+    if (hasCurrentMarker || hasExpectedMarker) {
+      let readingExpected = false;
+      const expectedLines: string[] = [];
+
+      for (const l of expectedSectionLines) {
+        if (/^\s*\*{0,2}expected(?:\s+behavior)?:\*{0,2}/i.test(l)) {
+          readingExpected = true;
+          const inlineContent = l.replace(/^\s*\*{0,2}expected(?:\s+behavior)?:\*{0,2}\s*/i, '').trim();
+          if (inlineContent.length > 0) {
+            expectedLines.push(inlineContent);
+          }
+          continue;
+        }
+        if (/^\s*\*{0,2}current(?:\s+behavior)?:\*{0,2}/i.test(l)) {
+          readingExpected = false;
+          continue;
+        }
+        if (readingExpected) {
+          if (l.trim().length > 0 && !l.startsWith('```') && !l.startsWith('#')) {
+            expectedLines.push(l.trim());
+          }
+        }
+      }
+
+      if (expectedLines.length > 0) {
+        const fullExpectedText = expectedLines.join(' ');
         criteria.push({
-          id: `AC-${String(idx).padStart(2, '0')}`,
-          description: clean,
+          id: `AC-${String(criteria.length + 1).padStart(2, '0')}`,
+          description: fullExpectedText,
           criterion_type: 'EXPLICIT',
-          exact_quote: line,
+          exact_quote: expectedLines[0], // Verbatim line in original text
           source_url: issueUrl,
           status: 'ACTIONABLE',
           status_rationale: 'Extracted verbatim from explicit expected-behavior section in issue description.',
@@ -67,30 +112,82 @@ export function extractExplicitCriteria(
             status: 'NO TEST EVIDENCE FOUND IN SCANNED FILES',
             candidate_test_files: [],
             rationale: 'Candidate test files mapped from repository tree index.',
-            proposed_manual_validation: `Manually verify "${clean}" before submitting pull request.`,
+            proposed_manual_validation: `Manually verify expected behavior before submitting pull request.`,
             test_executed: false,
           },
           test_command: testCommand,
         });
-        if (criteria.length >= 5) break;
+        return criteria;
+      }
+    } else {
+      for (const line of expectedSectionLines) {
+        if (/^(?:npm|pnpm|yarn|bun|curl|git|cd)\b/i.test(line)) continue;
+        const clean = line.replace(/^(- \[[ x]\]|\* |- |\d+\. )/, '').trim();
+        if (/^\*{0,2}(?:current|expected)(?:\s+behavior)?:\*{0,2}$/i.test(clean)) continue;
+        if (clean.length > 5 && !clean.startsWith('```') && !clean.startsWith('<')) {
+          criteria.push({
+            id: `AC-${String(criteria.length + 1).padStart(2, '0')}`,
+            description: clean,
+            criterion_type: 'EXPLICIT',
+            exact_quote: line,
+            source_url: issueUrl,
+            status: 'ACTIONABLE',
+            status_rationale: 'Extracted verbatim from explicit expected-behavior section in issue description.',
+            needs_maintainer_clarification: false,
+            candidate_implementation_files: [],
+            test_evidence: {
+              status: 'NO TEST EVIDENCE FOUND IN SCANNED FILES',
+              candidate_test_files: [],
+              rationale: 'Candidate test files mapped from repository tree index.',
+              proposed_manual_validation: `Manually verify "${clean}" before submitting pull request.`,
+              test_executed: false,
+            },
+            test_command: testCommand,
+          });
+          if (criteria.length >= 5) break;
+        }
       }
     }
   }
 
-  // 2. If no expected section, check for markdown task lists or bulleted items
+  // 2. If no expected section, check for markdown task lists outside reproduction sections
   if (criteria.length === 0) {
-    const taskLines = lines.map((l) => l.trim()).filter((l) => /^(- \[[ x]\]|\* |- |\d+\. )/.test(l));
-    taskLines.slice(0, 5).forEach((line, idx) => {
-      const clean = line.replace(/^(- \[[ x]\]|\* |- |\d+\. )/, '').trim();
+    let currentIsRepro = false;
+    const taskLines: string[] = [];
+
+    for (const rawLine of lines) {
+      const trimmed = rawLine.trim();
+      if (reproSectionRegex.test(trimmed)) {
+        currentIsRepro = true;
+        continue;
+      }
+      if (trimmed.startsWith('#')) {
+        currentIsRepro = false;
+      }
+      if (!currentIsRepro) {
+        // Only consider markdown checkboxes (- [ ]) or bullets that are NOT numbered reproduction steps or commands
+        const isCheckbox = /^- \[[ x]\]\s*(.+)/.test(trimmed);
+        const isBullet = /^[\*-]\s+(.+)/.test(trimmed);
+        // Exclude lines with curl or package manager commands
+        const isCommand = /^(?:npm|pnpm|yarn|bun|curl|git|cd)\b/i.test(trimmed.replace(/^[-*]\s+/, '')) || /curl\s+-s/i.test(trimmed);
+
+        if ((isCheckbox || isBullet) && !isCommand) {
+          taskLines.push(trimmed);
+        }
+      }
+    }
+
+    taskLines.slice(0, 5).forEach((line) => {
+      const clean = line.replace(/^(- \[[ x]\]|\* |- )/, '').trim();
       if (clean.length > 5) {
         criteria.push({
-          id: `AC-${String(idx + 1).padStart(2, '0')}`,
+          id: `AC-${String(criteria.length + 1).padStart(2, '0')}`,
           description: clean,
           criterion_type: 'EXPLICIT',
           exact_quote: line,
           source_url: issueUrl,
           status: 'ACTIONABLE',
-          status_rationale: 'Extracted directly from issue task list or bullet point.',
+          status_rationale: 'Extracted directly from issue task list.',
           needs_maintainer_clarification: false,
           candidate_implementation_files: [],
           test_evidence: {
@@ -162,10 +259,10 @@ export async function compileContributionContract(
       metadata.labels.map((l) => l.name)
     );
 
-    const inspectedTestSources = new Set(
+    const inspectedTestMap = new Map(
       sources
         .filter((s) => s.source_type === 'test' && s.source_id.startsWith('test-content-'))
-        .map((s) => s.path)
+        .map((s) => [s.path, s.excerpt])
     );
 
     // Convert AI criteria to AcceptanceCriterion format
@@ -202,14 +299,21 @@ export async function compileContributionContract(
       }
 
       // Test evidence: preserve AI proposed or map from ranked tree
-      let candidateTestFiles = (c.test_evidence?.candidate_test_files || []).map((t) => ({
-        path: t.path,
-        source_id: t.source_id,
-        verified_exists: false,
-        assertions_inspected: inspectedTestSources.has(t.path),
-      }));
+      let candidateTestFiles: CandidateTestFile[] = (c.test_evidence?.candidate_test_files || []).map((t) => {
+        const isInspected = inspectedTestMap.has(t.path);
+        const excerpt = inspectedTestMap.get(t.path);
+        const relevance = isInspected
+          ? evaluateTestRelevance(t.path, excerpt, c.description, c.exact_quote)
+          : { isRelevant: false, rationale: 'Uninspected path in tree.' };
 
-      let testEvidenceStatus: TestEvidenceStatus = (c.test_evidence?.status as TestEvidenceStatus) || 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
+        return {
+          path: t.path,
+          source_id: t.source_id,
+          verified_exists: false,
+          assertions_inspected: isInspected,
+          relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : 'UNRELATED') : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
+        };
+      });
 
       if (candidateTestFiles.length === 0 && ranked.testCandidates.length > 0) {
         const critRanked = rankRepositoryPaths(
@@ -219,32 +323,50 @@ export async function compileContributionContract(
           metadata.labels.map((l) => l.name)
         );
         const topTests = critRanked.testCandidates.length > 0
-          ? critRanked.testCandidates.slice(0, 2)
-          : ranked.testCandidates.slice(0, 2);
+          ? critRanked.testCandidates.slice(0, 3)
+          : ranked.testCandidates.slice(0, 3);
 
         if (topTests.length > 0) {
-          candidateTestFiles = topTests.map((p) => ({
-            path: p,
-            source_id: 'repo-tree',
-            verified_exists: true,
-            assertions_inspected: inspectedTestSources.has(p),
-          }));
-          const hasInspected = candidateTestFiles.some((f) => f.assertions_inspected);
-          testEvidenceStatus = scanBoundaries.is_tree_truncated
-            ? 'SCAN INCOMPLETE / UNKNOWN'
-            : hasInspected
-            ? 'TEST EVIDENCE FOUND'
-            : 'POSSIBLE TEST CANDIDATE';
+          candidateTestFiles = topTests.map((p) => {
+            const isInspected = inspectedTestMap.has(p);
+            const excerpt = inspectedTestMap.get(p);
+            const relevance = isInspected
+              ? evaluateTestRelevance(p, excerpt, c.description, c.exact_quote)
+              : { isRelevant: false, rationale: 'Uninspected path in tree.' };
+
+            return {
+              path: p,
+              source_id: 'repo-tree',
+              verified_exists: true,
+              assertions_inspected: isInspected,
+              relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : 'UNRELATED') : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
+            };
+          });
         }
       }
 
-      const defaultRationale = testEvidenceStatus === 'TEST EVIDENCE FOUND'
-        ? `Located candidate test file(s) in repository tree (${candidateTestFiles.map((t) => t.path).join(', ')}). Test assertions inspected in bounded scan. Test execution has not occurred (security guardrail).`
-        : testEvidenceStatus === 'POSSIBLE TEST CANDIDATE'
-        ? `Candidate test path(s) found in repository tree (${candidateTestFiles.map((t) => t.path).join(', ')}). Assertions not inspected; test execution has not occurred.`
-        : scanBoundaries.is_tree_truncated
-        ? 'Repository tree was truncated by GitHub API limit; test evidence scan is incomplete.'
-        : 'No test evidence found in scanned files. Test coverage cannot be established from bounded context.';
+      const relevantInspectedTests = candidateTestFiles.filter((t) => t.assertions_inspected && t.relevance_verdict === 'RELEVANT');
+      const unrelatedInspectedTests = candidateTestFiles.filter((t) => t.assertions_inspected && t.relevance_verdict === 'UNRELATED');
+
+      let testEvidenceStatus: TestEvidenceStatus;
+      let defaultRationale: string;
+
+      if (scanBoundaries.is_tree_truncated) {
+        testEvidenceStatus = 'SCAN INCOMPLETE / UNKNOWN';
+        defaultRationale = 'Repository tree was truncated by GitHub API limit; test evidence scan is incomplete.';
+      } else if (relevantInspectedTests.length > 0) {
+        testEvidenceStatus = 'TEST EVIDENCE FOUND';
+        defaultRationale = `Located relevant candidate test file(s) in repository tree (${relevantInspectedTests.map((t) => t.path).join(', ')}). Test assertions inspected in bounded scan. Test execution has not occurred (security guardrail).`;
+      } else if (unrelatedInspectedTests.length > 0 && candidateTestFiles.every((t) => t.relevance_verdict === 'UNRELATED')) {
+        testEvidenceStatus = 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
+        defaultRationale = `Inspected candidate test files in bounded scan (${unrelatedInspectedTests.map((t) => t.path).join(', ')}) do not verify criterion requirements. No relevant automated test evidence confirmed in bounded scan. Candidate tests were not executed (security guardrail).`;
+      } else if (candidateTestFiles.some((t) => !t.assertions_inspected)) {
+        testEvidenceStatus = 'POSSIBLE TEST CANDIDATE';
+        defaultRationale = `Candidate test path(s) found in repository tree (${candidateTestFiles.map((t) => t.path).join(', ')}). Assertions not inspected; test execution has not occurred.`;
+      } else {
+        testEvidenceStatus = 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
+        defaultRationale = 'No test evidence found in scanned files. Test coverage cannot be established from bounded context.';
+      }
 
       return {
         id,
@@ -288,6 +410,11 @@ export async function compileContributionContract(
           user_edited: false,
         };
 
+    // Clean first_hour_route items so they never carry leading numbers
+    const cleanFirstHourRoute = aiData.first_hour_route.map((step) =>
+      step.replace(/^\d+[\.\)]\s*/, '').trim()
+    );
+
     return {
       issue_metadata: metadata,
       issue_summary: aiData.issue_summary,
@@ -295,13 +422,21 @@ export async function compileContributionContract(
       readiness_gate: claimGateResult.readinessGate,
       criteria: claimGateResult.validatedCriteria,
       setup_truth: setupTruth,
+      reproduction_environment: extractReproductionEnvironment(metadata.body),
       maintainer_handoff: maintainerHandoff,
       sources: claimGateResult.validatedSources,
-      first_hour_route: aiData.first_hour_route,
+      first_hour_route: cleanFirstHourRoute,
       pr_checklist: aiData.pr_checklist,
       scan_boundaries: scanBoundaries,
       model_id: process.env.GEMMA_MODEL || 'gemma-4-26b-a4b-it',
       ai_configured: true,
+      engine: 'gemma',
+      analysis_status: 'gemma_success',
+      engine_details: {
+        model_id: process.env.GEMMA_MODEL || 'gemma-4-26b-a4b-it',
+        configured: true,
+        guardrails_passed: true,
+      },
       claim_gate_audit: claimGateResult.audit,
     };
   }
@@ -313,7 +448,8 @@ export async function compileContributionContract(
     repositoryFiles,
     setupTruth,
     scanBoundaries,
-    gemmaResult.error
+    gemmaResult.error,
+    gemmaResult.missing_key
   );
 }
 
@@ -323,7 +459,8 @@ export function compileDeterministicBaselineContract(
   repositoryFiles: string[],
   setupTruth: SetupTruth,
   scanBoundaries: ScanBoundaries,
-  aiErrorMessage?: string
+  aiErrorMessage?: string,
+  isMissingKey?: boolean
 ): ContributionContract {
   // Extract explicit criteria preserving verbatim quotes from expected behavior or task list
   const explicitCriteria = extractExplicitCriteria(metadata.body, metadata.url, setupTruth.test_command);
@@ -338,7 +475,7 @@ export function compileDeterministicBaselineContract(
           exact_quote: undefined,
           source_url: metadata.url,
           status: 'AMBIGUOUS',
-          status_rationale: 'No explicit task list or bulleted acceptance criteria found in issue description; proposed from issue title.',
+          status_rationale: 'No explicit expected behavior or acceptance criteria found in issue description; proposed from issue title.',
           needs_maintainer_clarification: true,
           candidate_implementation_files: [],
           test_evidence: {
@@ -362,10 +499,10 @@ export function compileDeterministicBaselineContract(
   const potentialSourceFiles = ranked.sourceCandidates.slice(0, 3);
   const potentialTestFiles = ranked.testCandidates.slice(0, 3);
 
-  const inspectedTestSources = new Set(
+  const inspectedTestMap = new Map(
     sources
       .filter((s) => s.source_type === 'test' && s.source_id.startsWith('test-content-'))
-      .map((s) => s.path)
+      .map((s) => [s.path, s.excerpt])
   );
 
   criteria.forEach((c) => {
@@ -378,26 +515,51 @@ export function compileDeterministicBaselineContract(
     }));
 
     if (potentialTestFiles.length > 0) {
-      const hasInspected = potentialTestFiles.some((p) => inspectedTestSources.has(p));
-      const testStatus: TestEvidenceStatus = scanBoundaries.is_tree_truncated
-        ? 'SCAN INCOMPLETE / UNKNOWN'
-        : hasInspected
-        ? 'TEST EVIDENCE FOUND'
-        : 'POSSIBLE TEST CANDIDATE';
+      const candidateTestFiles = potentialTestFiles.map((p) => {
+        const isInspected = inspectedTestMap.has(p);
+        const excerpt = inspectedTestMap.get(p);
+        const relevance = isInspected
+          ? evaluateTestRelevance(p, excerpt, c.description, c.exact_quote)
+          : { isRelevant: false, rationale: 'Uninspected path in tree.' };
 
-      c.test_evidence = {
-        status: testStatus,
-        candidate_test_files: potentialTestFiles.map((p) => ({
+        return {
           path: p,
           source_id: 'repo-tree',
           verified_exists: true,
-          assertions_inspected: inspectedTestSources.has(p),
-        })),
-        rationale: testStatus === 'TEST EVIDENCE FOUND'
-          ? `Located candidate test file(s) in repository tree: ${potentialTestFiles.join(', ')}. Test assertions inspected in bounded scan. Tests have not been executed.`
-          : `Candidate test path(s) found in repository tree: ${potentialTestFiles.join(', ')}. Assertions not inspected; tests have not been executed.`,
+          assertions_inspected: isInspected,
+          relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : 'UNRELATED') : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
+        };
+      });
+
+      const relevantInspectedTests = candidateTestFiles.filter((t) => t.assertions_inspected && t.relevance_verdict === 'RELEVANT');
+      const unrelatedInspectedTests = candidateTestFiles.filter((t) => t.assertions_inspected && t.relevance_verdict === 'UNRELATED');
+
+      let testStatus: TestEvidenceStatus;
+      let defaultRationale: string;
+
+      if (scanBoundaries.is_tree_truncated) {
+        testStatus = 'SCAN INCOMPLETE / UNKNOWN';
+        defaultRationale = 'Repository tree was truncated by GitHub API limit; test evidence scan is incomplete.';
+      } else if (relevantInspectedTests.length > 0) {
+        testStatus = 'TEST EVIDENCE FOUND';
+        defaultRationale = `Located candidate test file(s) in repository tree (${relevantInspectedTests.map((t) => t.path).join(', ')}). Test assertions inspected in bounded scan. Tests have not been executed (security guardrail).`;
+      } else if (unrelatedInspectedTests.length > 0 && candidateTestFiles.every((t) => t.relevance_verdict === 'UNRELATED')) {
+        testStatus = 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
+        defaultRationale = `Inspected candidate test files in bounded scan (${unrelatedInspectedTests.map((t) => t.path).join(', ')}) do not verify criterion requirements. No relevant automated test evidence confirmed in bounded scan. Candidate tests were not executed (security guardrail).`;
+      } else if (candidateTestFiles.some((t) => !t.assertions_inspected)) {
+        testStatus = 'POSSIBLE TEST CANDIDATE';
+        defaultRationale = `Candidate test path(s) found in repository tree (${candidateTestFiles.map((t) => t.path).join(', ')}). Assertions not inspected; tests have not been executed.`;
+      } else {
+        testStatus = 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
+        defaultRationale = 'No test evidence found in scanned files. Test coverage cannot be established from bounded context.';
+      }
+
+      c.test_evidence = {
+        status: testStatus,
+        candidate_test_files: candidateTestFiles,
+        rationale: defaultRationale,
         proposed_manual_validation: 'Run local test suite and inspect test coverage for affected components.',
-        assertions_inspected: hasInspected,
+        assertions_inspected: candidateTestFiles.some((t) => t.assertions_inspected),
         test_executed: false,
       };
     }
@@ -422,6 +584,13 @@ export function compileDeterministicBaselineContract(
     potentialSourceFiles[0]
   );
 
+  const gemmaConfigured = isGemmaConfigured();
+  const fallbackNotice = aiErrorMessage
+    ? `Gemma request failed — Baseline fallback used: ${aiErrorMessage}`
+    : isMissingKey
+    ? 'GEMMA_API_KEY is not configured in server environment.'
+    : 'Deterministic baseline compiler used.';
+
   return {
     issue_metadata: metadata,
     issue_summary: issueSummary,
@@ -429,14 +598,15 @@ export function compileDeterministicBaselineContract(
     readiness_gate: claimGateResult.readinessGate,
     criteria: claimGateResult.validatedCriteria,
     setup_truth: setupTruth,
+    reproduction_environment: extractReproductionEnvironment(metadata.body),
     maintainer_handoff: maintainerHandoff,
     sources: claimGateResult.validatedSources,
     first_hour_route: [
-      `1. Clone ${metadata.owner}/${metadata.repo} and checkout a new branch (e.g. fix/issue-${metadata.number}).`,
-      `2. Run documented setup: ${setupTruth.install_command?.command || 'inspect package manifest'}`,
-      `3. Execute test suite: ${setupTruth.test_command?.command || 'inspect test configuration'}`,
-      `4. Verify candidate files: ${potentialSourceFiles.slice(0, 2).join(', ') || 'locate relevant module'}`,
-      '5. Confirm requirements with maintainer before opening PR if criteria are marked clarify-first.',
+      `Clone ${metadata.owner}/${metadata.repo} and checkout a new branch (e.g. fix/issue-${metadata.number}).`,
+      `Run documented setup: ${setupTruth.install_command?.command || 'inspect package manifest'}`,
+      `Execute test suite: ${setupTruth.test_command?.command || 'inspect test configuration'}`,
+      `Verify candidate files: ${potentialSourceFiles.slice(0, 2).join(', ') || 'locate relevant module'}`,
+      'Confirm requirements with maintainer before opening PR if criteria are marked clarify-first.',
     ],
     pr_checklist: [
       `Reference issue #${metadata.number} in PR description ("Fixes #${metadata.number}")`,
@@ -445,7 +615,15 @@ export function compileDeterministicBaselineContract(
       'Validate that all existing tests pass before submission',
     ],
     scan_boundaries: scanBoundaries,
-    ai_configured: false,
+    ai_configured: gemmaConfigured,
+    engine: 'baseline',
+    analysis_status: 'baseline_fallback',
+    engine_details: {
+      model_id: process.env.GEMMA_MODEL || 'gemma-4-26b-a4b-it',
+      configured: gemmaConfigured,
+      fallback_reason: fallbackNotice,
+      guardrails_passed: true,
+    },
     claim_gate_audit: {
       ...claimGateResult.audit,
       warnings: [

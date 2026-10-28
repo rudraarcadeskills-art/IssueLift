@@ -180,9 +180,21 @@ export function TraceMapRadar({
                                 <ExternalLink className="w-3 h-3 shrink-0" />
                               </a>
                               <span className="text-[10px] block mt-0.5">
-                                {tFile.assertions_inspected ? (
+                                {tFile.is_automated_test === false ? (
+                                  <span className="text-amber-700 dark:text-amber-400 font-medium">
+                                    ⚠️ Fixture/Sample component (Not automated test)
+                                  </span>
+                                ) : tFile.relevance_verdict === 'CONFIRMED_RELEVANT' ? (
                                   <span className="text-teal-700 dark:text-teal-300 font-medium">
-                                    ✓ Test assertions inspected (not executed)
+                                    ✓ Verified Relevant Automated Test (inspected, not executed)
+                                  </span>
+                                ) : tFile.relevance_verdict === 'UNRELATED' ? (
+                                  <span className="text-slate-600 dark:text-slate-400">
+                                    ⚠️ Unrelated test suite (inspected, does not cover criterion)
+                                  </span>
+                                ) : tFile.assertions_inspected ? (
+                                  <span className="text-teal-700 dark:text-teal-300 font-medium">
+                                    ✓ Automated test assertions inspected (not executed)
                                   </span>
                                 ) : (
                                   <span className="text-slate-600 dark:text-slate-400">

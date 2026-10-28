@@ -15,7 +15,7 @@ import { MaintainerHandoffCard } from '@/components/MaintainerHandoffCard';
 import { ProofBundleExportModal } from '@/components/ProofBundleExportModal';
 import { ProofBenchViewer } from '@/components/ProofBenchViewer';
 import { MissingKeyBanner } from '@/components/MissingKeyBanner';
-import { ContributionContract, AcceptanceCriterion, MaintainerHandoff } from '@/lib/types';
+import { ContributionContract, AcceptanceCriterion, MaintainerHandoff, ConfigStatus, AnalysisStatus } from '@/lib/types';
 import {
   Download,
   ShieldCheck,
@@ -42,7 +42,8 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [contract, setContract] = useState<ContributionContract | null>(null);
   const [isExportOpen, setIsExportOpen] = useState(false);
-  const [gemmaConfigState, setGemmaConfigState] = useState<'checking' | 'configured' | 'missing' | 'unavailable'>('checking');
+  const [gemmaConfigState, setGemmaConfigState] = useState<ConfigStatus>('checking');
+  const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>('idle');
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(false);
 
   useEffect(() => {
@@ -80,6 +81,7 @@ export default function HomePage() {
     setError(null);
     setContract(null);
     setActiveView('scanner');
+    setAnalysisStatus('running');
 
     // Realistic scan stage transitions
     setScanStage('fetching_issue');
@@ -108,6 +110,7 @@ export default function HomePage() {
       const contractData: ContributionContract = await response.json();
       setContract(contractData);
       setScanStage('complete');
+      setAnalysisStatus(contractData.analysis_status || (contractData.engine === 'gemma' ? 'gemma_success' : 'baseline_fallback'));
 
       if (contractData.ai_configured) {
         setGemmaConfigState('configured');
@@ -115,6 +118,7 @@ export default function HomePage() {
     } catch (err: any) {
       setError(err.message || 'An unexpected error occurred while scanning the issue.');
       setScanStage('idle');
+      setAnalysisStatus('analysis_failed');
     } finally {
       setIsLoading(false);
     }
@@ -139,6 +143,7 @@ export default function HomePage() {
   const handleResetScan = () => {
     setContract(null);
     setScanStage('idle');
+    setAnalysisStatus('idle');
     setError(null);
     setActiveWorkspaceTab('all');
   };
@@ -148,7 +153,10 @@ export default function HomePage() {
       <Header
         activeView={activeView}
         onSelectView={setActiveView}
-        isGemmaActive={contract?.ai_configured || gemmaConfigState === 'configured'}
+        configStatus={gemmaConfigState}
+        analysisStatus={analysisStatus}
+        fallbackReason={contract?.engine_details?.fallback_reason}
+        isGemmaActive={contract?.analysis_status === 'gemma_success'}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 space-y-10">
@@ -273,7 +281,11 @@ export default function HomePage() {
             )}
 
             {/* Live Scan Pipeline Progress */}
-            <ScanProgressBar currentStage={scanStage} />
+            <ScanProgressBar
+              currentStage={scanStage}
+              analysisStatus={analysisStatus}
+              fallbackReason={contract?.engine_details?.fallback_reason}
+            />
 
             {/* Missing Key Guidance Banner (only if unconfigured and not dismissed) */}
             {gemmaConfigState === 'missing' && !bannerDismissed && (
@@ -283,6 +295,21 @@ export default function HomePage() {
             {/* Interactive Analysis Workspace (When Contract is Loaded) */}
             {contract && (
               <section className="space-y-8 animate-in fade-in slide-in-from-bottom-3 duration-300">
+                {/* Fallback Disclosure Alert */}
+                {contract.analysis_status === 'baseline_fallback' && (
+                  <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-500/40 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-3 shadow-sm">
+                    <ShieldAlert className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="font-bold text-sm text-amber-900 dark:text-amber-200">
+                        Gemma request failed — Baseline fallback used
+                      </p>
+                      <p className="text-amber-800/90 dark:text-amber-300/80 leading-relaxed">
+                        {contract.engine_details?.fallback_reason || 'Inference request did not succeed; contract was compiled deterministically from verified repository manifests and issue text.'}
+                        {' '}<strong>Baseline result — guardrails passed:</strong> Deterministic Claim Gate verified that all candidate paths exist in the fetched repository tree.
+                      </p>
+                    </div>
+                  </div>
+                )}
                 {/* Workspace Header & Breadcrumb Bar */}
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-4 rounded-2xl bg-white dark:bg-midnight-800/90 border border-slate-200 dark:border-midnight-700/80 shadow-sm dark:shadow-card">
                   {/* Left: Breadcrumbs & Issue Target */}
@@ -418,7 +445,14 @@ export default function HomePage() {
 
                 {(activeWorkspaceTab === 'all' || activeWorkspaceTab === 'setup') && (
                   /* 5. Setup Truth */
-                  <SetupTruthCard setupTruth={contract.setup_truth} />
+                  <SetupTruthCard
+                    setupTruth={contract.setup_truth}
+                    reproductionEnvironment={contract.reproduction_environment}
+                    targetRepo={{
+                      owner: contract.issue_metadata.owner,
+                      repo: contract.issue_metadata.repo,
+                    }}
+                  />
                 )}
 
                 {(activeWorkspaceTab === 'all' || activeWorkspaceTab === 'handoff') && (
@@ -444,7 +478,7 @@ export default function HomePage() {
                             <span className="w-5 h-5 rounded-full bg-violet-100 text-violet-800 dark:bg-violet-500/20 dark:text-violet-300 font-bold text-xs flex items-center justify-center shrink-0 mt-0.5 border border-violet-200 dark:border-violet-500/30">
                               {idx + 1}
                             </span>
-                            <span className="leading-relaxed">{step}</span>
+                            <span className="leading-relaxed">{step.replace(/^\d+[\.\)]\s*/, '')}</span>
                           </li>
                         ))}
                       </ol>

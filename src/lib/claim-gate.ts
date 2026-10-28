@@ -69,24 +69,62 @@ export function runDeterministicClaimGate(
     return source;
   });
 
+  function isReproductionOrCommandQuote(quote: string, issueBody: string): boolean {
+    const q = quote.trim().toLowerCase();
+    if (!q) return true;
+
+    // Reject reproduction / setup command patterns
+    if (
+      /^(?:npm|pnpm|yarn|bun|npx|curl|git clone|cd\s)\b/i.test(quote.trim()) ||
+      /^clone the repo/i.test(quote.trim()) ||
+      /npm install/i.test(quote.trim()) ||
+      /npm run/i.test(quote.trim()) ||
+      /curl\s+-s/i.test(quote.trim())
+    ) {
+      return true;
+    }
+
+    // Check if quote originates from reproduction sections
+    const reproSectionRegex = /(?:###?\s*(?:to reproduce|steps to reproduce|how to reproduce)[\s\S]*?)(?:###?\s*(?:current|expected|additional|environment|version)|$)/i;
+    const match = issueBody.match(reproSectionRegex);
+    if (match) {
+      const reproText = match[0].toLowerCase();
+      const bodyWithoutRepro = issueBody.toLowerCase().replace(reproText, '');
+      if (reproText.includes(q) && !bodyWithoutRepro.includes(q)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   // 2. Validate Criteria & TraceMap
   const validatedCriteria: AcceptanceCriterion[] = rawCriteria.map((criterion, idx) => {
     const id = criterion.id || `AC-${String(idx + 1).padStart(2, '0')}`;
     
-    // Explicit vs Inferred: ensure exact quote actually exists in issue body or comments
+    // Explicit vs Inferred: ensure exact quote actually exists in issue body or comments, and is NOT a repro step or command
     const allIssueText = `${metadata.body}\n${(metadata.comments || []).map((c) => c.body).join('\n')}`.toLowerCase();
     const quoteInBody = Boolean(
       criterion.exact_quote &&
       criterion.exact_quote.trim().length > 0 &&
       allIssueText.includes(criterion.exact_quote.trim().toLowerCase())
     );
-    const isExplicit = criterion.criterion_type === 'EXPLICIT' && quoteInBody;
+    const isReproOrCommand = criterion.exact_quote ? isReproductionOrCommandQuote(criterion.exact_quote, metadata.body) : false;
+    const isExplicit = criterion.criterion_type === 'EXPLICIT' && quoteInBody && !isReproOrCommand;
     const criterion_type = isExplicit ? 'EXPLICIT' : 'AI-PROPOSED';
+
+    if (criterion.criterion_type === 'EXPLICIT' && !isExplicit) {
+      if (isReproOrCommand) {
+        warnings.push(`Claim Gate: Criterion "${id}" quote is derived from reproduction steps/setup commands; demoted to AI-PROPOSED.`);
+      } else if (!quoteInBody) {
+        warnings.push(`Claim Gate: Criterion "${id}" verbatim quote not found in issue text; demoted to AI-PROPOSED.`);
+      }
+    }
 
     // Validate Candidate Implementation Files
     const validatedImplFiles: CandidateFile[] = (criterion.candidate_implementation_files || []).map((file) => {
       const existsInTree = fileSet.has(file.path);
-      const validSourceId = sourceIdSet.has(file.source_id);
+      const validSourceId = file.source_id === 'repo-tree' || sourceIdSet.has(file.source_id);
 
       if (!existsInTree) {
         rejectedPathsCount++;
@@ -107,42 +145,60 @@ export function runDeterministicClaimGate(
     });
 
     // Validate Test Evidence
-    let testStatus: TestEvidenceStatus = criterion.test_evidence?.status || 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
+    let testStatus: TestEvidenceStatus = 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
     const validatedTestFiles: CandidateTestFile[] = [];
 
     if (scanBoundaries.is_tree_truncated) {
       testStatus = 'SCAN INCOMPLETE / UNKNOWN';
     } else {
       for (const tFile of criterion.test_evidence?.candidate_test_files || []) {
-        if (fileSet.has(tFile.path)) {
-          validatedTestFiles.push({
-            ...tFile,
-            verified_exists: true,
-            assertions_inspected: Boolean(tFile.assertions_inspected),
-          });
-        } else {
+        if (!fileSet.has(tFile.path)) {
           rejectedPathsCount++;
           warnings.push(`Claim Gate: Candidate test path "${tFile.path}" in ${id} not found in tree.`);
+          continue;
         }
+
+        const isAutomatedTest = tFile.is_automated_test !== false;
+        const relevance = tFile.relevance_verdict || (isAutomatedTest ? 'POTENTIALLY_RELEVANT' : 'UNRELATED');
+
+        validatedTestFiles.push({
+          ...tFile,
+          verified_exists: true,
+          assertions_inspected: Boolean(tFile.assertions_inspected),
+          is_automated_test: isAutomatedTest,
+          relevance_verdict: relevance,
+          test_executed: false,
+        });
       }
 
-      if (validatedTestFiles.length > 0) {
-        const hasInspected = validatedTestFiles.some((f) => f.assertions_inspected);
-        testStatus = hasInspected ? 'TEST EVIDENCE FOUND' : 'POSSIBLE TEST CANDIDATE';
+      const confirmedRelevantTests = validatedTestFiles.filter(
+        (f) => f.assertions_inspected && f.is_automated_test && f.relevance_verdict === 'CONFIRMED_RELEVANT'
+      );
+      const potentialTests = validatedTestFiles.filter(
+        (f) => f.is_automated_test && f.relevance_verdict !== 'UNRELATED'
+      );
+
+      if (confirmedRelevantTests.length > 0) {
+        testStatus = 'TEST EVIDENCE FOUND';
+      } else if (potentialTests.length > 0) {
+        testStatus = 'POSSIBLE TEST CANDIDATE';
       } else {
         testStatus = 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
       }
     }
 
-    const hasInspectedAssertions = validatedTestFiles.some((f) => f.assertions_inspected);
+    const hasInspectedRelevant = validatedTestFiles.some(
+      (f) => f.assertions_inspected && f.is_automated_test && f.relevance_verdict === 'CONFIRMED_RELEVANT'
+    );
+
     // Never claim tests passed or executed without actual execution
     const rationale = testStatus === 'TEST EVIDENCE FOUND'
-      ? `Located candidate test file(s) in repository tree (${validatedTestFiles.map((f) => f.path).join(', ')}). Test assertions inspected in bounded scan. Test execution has not occurred (security guardrail).`
+      ? `Located relevant automated test file(s) in repository tree (${validatedTestFiles.filter((f) => f.relevance_verdict === 'CONFIRMED_RELEVANT').map((f) => f.path).join(', ')}). Test assertions inspected in bounded scan and verified relevant to acceptance criterion. Test was inspected but NOT executed (security guardrail; untrusted code is never run).`
       : testStatus === 'POSSIBLE TEST CANDIDATE'
-      ? `Candidate test path(s) found in repository tree (${validatedTestFiles.map((f) => f.path).join(', ')}). Assertions not inspected; test execution has not occurred.`
+      ? `Candidate test path(s) found in repository tree (${validatedTestFiles.map((f) => f.path).join(', ')}). Assertions not inspected or relevance unconfirmed; test NOT executed.`
       : testStatus === 'SCAN INCOMPLETE / UNKNOWN'
       ? 'Repository tree was truncated by GitHub API limit; test evidence scan is incomplete.'
-      : 'No test evidence found in scanned files. Test coverage cannot be established from bounded context.';
+      : 'No relevant automated test evidence confirmed in scanned files. Candidate files were either fixture/sample components, lacked automated assertions, or were unrelated to this criterion.';
 
     return {
       ...criterion,
@@ -156,7 +212,7 @@ export function runDeterministicClaimGate(
         proposed_manual_validation:
           criterion.test_evidence?.proposed_manual_validation ||
           'Verify locally by reproducing issue steps before and after changes.',
-        assertions_inspected: hasInspectedAssertions,
+        assertions_inspected: hasInspectedRelevant,
         test_executed: false,
       },
     };

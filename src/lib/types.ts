@@ -33,6 +33,10 @@ export type TestEvidenceStatus =
 
 export type CommandLabel = 'DOCUMENTED' | 'PROPOSED' | 'UNKNOWN';
 
+export type AnalysisEngine = 'gemma' | 'baseline';
+export type AnalysisStatus = 'gemma_success' | 'baseline_fallback' | 'analysis_failed' | 'idle' | 'running';
+export type ConfigStatus = 'checking' | 'configured' | 'missing' | 'unavailable';
+
 export interface CandidateFile {
   path: string;
   relevance_rationale: string;
@@ -46,6 +50,27 @@ export interface CandidateTestFile {
   source_id: string;
   verified_exists: boolean;
   assertions_inspected?: boolean;
+  is_automated_test?: boolean;
+  relevance_verdict?: 'CONFIRMED_RELEVANT' | 'POTENTIALLY_RELEVANT' | 'RELEVANT' | 'UNRELATED' | 'UNKNOWN';
+  relevance_rationale?: string;
+  test_runner_detected?: string;
+  test_executed?: boolean;
+}
+
+export interface ReproductionStep {
+  step_number: number;
+  instruction: string;
+  command?: string;
+  is_validation_scenario?: boolean;
+  provenance?: string;
+}
+
+export interface ReproductionEnvironment {
+  reproduction_repo_url?: string;
+  reproduction_steps: ReproductionStep[];
+  reproduction_commands: (string | CommandInfo)[];
+  manual_validation_scenarios: string[];
+  notes?: string;
 }
 
 export interface TestEvidenceInfo {
@@ -164,6 +189,7 @@ export interface ContributionContract {
   readiness_gate: ReadinessGate;
   criteria: AcceptanceCriterion[];
   setup_truth: SetupTruth;
+  reproduction_environment?: ReproductionEnvironment;
   maintainer_handoff: MaintainerHandoff;
   sources: SourceEvidence[];
   first_hour_route: string[];
@@ -171,6 +197,14 @@ export interface ContributionContract {
   scan_boundaries: ScanBoundaries;
   model_id?: string;
   ai_configured: boolean;
+  engine: AnalysisEngine;
+  analysis_status: AnalysisStatus;
+  engine_details?: {
+    model_id?: string;
+    configured: boolean;
+    fallback_reason?: string;
+    guardrails_passed: boolean;
+  };
   claim_gate_audit: {
     rejected_paths_count: number;
     rejected_source_ids_count: number;

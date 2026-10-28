@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ShieldCheck, Terminal, BookOpen, HelpCircle } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
+import { ConfigStatus, AnalysisStatus } from '@/lib/types';
 
 export type ActiveView = 'scanner' | 'how-it-works' | 'proofbench' | 'playbook';
 
@@ -12,17 +13,29 @@ export type EngineStatus =
   | 'live'
   | 'ready'
   | 'missing_key'
-  | 'quota_limited'
+  | 'fallback'
+  | 'analysis_failed'
+  | 'running'
   | 'server_error';
 
 interface HeaderProps {
   activeView?: ActiveView;
   onSelectView?: (view: ActiveView) => void;
+  configStatus?: ConfigStatus;
+  analysisStatus?: AnalysisStatus;
+  fallbackReason?: string;
   isGemmaActive?: boolean;
 }
 
-export function Header({ activeView = 'scanner', onSelectView, isGemmaActive = false }: HeaderProps) {
-  const [engineStatus, setEngineStatus] = useState<EngineStatus>('checking');
+export function Header({
+  activeView = 'scanner',
+  onSelectView,
+  configStatus: propConfigStatus,
+  analysisStatus = 'idle',
+  fallbackReason,
+  isGemmaActive = false,
+}: HeaderProps) {
+  const [internalConfigStatus, setInternalConfigStatus] = useState<ConfigStatus>('checking');
   const [modelName, setModelName] = useState<string>('gemma-4-26b-a4b-it');
 
   useEffect(() => {
@@ -35,24 +48,44 @@ export function Header({ activeView = 'scanner', onSelectView, isGemmaActive = f
         if (data?.gemma?.model) {
           setModelName(data.gemma.model);
         }
-        if (isGemmaActive) {
-          setEngineStatus('live');
-        } else if (data?.gemma?.configured) {
-          setEngineStatus('ready');
+        if (data?.gemma?.configured) {
+          setInternalConfigStatus('configured');
         } else {
-          setEngineStatus('missing_key');
+          setInternalConfigStatus('missing');
         }
       })
       .catch(() => {
-        setEngineStatus('server_error');
+        setInternalConfigStatus('unavailable');
       });
-  }, [isGemmaActive]);
+  }, []);
 
-  useEffect(() => {
-    if (isGemmaActive) {
-      setEngineStatus('live');
+  const configStatus = propConfigStatus || internalConfigStatus;
+
+  // Determine truthful engine display status
+  let engineStatus: EngineStatus = 'checking';
+
+  if (analysisStatus === 'gemma_success') {
+    engineStatus = 'live';
+  } else if (analysisStatus === 'baseline_fallback') {
+    engineStatus = 'fallback';
+  } else if (analysisStatus === 'analysis_failed') {
+    engineStatus = 'analysis_failed';
+  } else if (analysisStatus === 'running') {
+    engineStatus = 'running';
+  } else if (isGemmaActive) {
+    engineStatus = 'live';
+  } else {
+    // Idle / pre-scan state: show configuration reality
+    if (configStatus === 'configured') {
+      engineStatus = 'ready';
+    } else if (configStatus === 'missing') {
+      engineStatus = 'missing_key';
+    } else if (configStatus === 'unavailable') {
+      engineStatus = 'server_error';
+    } else {
+      engineStatus = 'checking';
     }
-  }, [isGemmaActive]);
+  }
 
   const handleNav = (view: ActiveView) => {
     if (onSelectView) {
@@ -176,6 +209,17 @@ export function Header({ activeView = 'scanner', onSelectView, isGemmaActive = f
             </span>
           )}
 
+          {engineStatus === 'fallback' && (
+            <span
+              title={fallbackReason || 'Gemma inference unavailable; deterministic baseline compiler used'}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-500/40"
+            >
+              <span className="w-2 h-2 rounded-full bg-amber-500 dark:bg-amber-400" />
+              <span className="hidden sm:inline">Baseline Fallback</span>
+              <span className="sm:hidden font-mono text-[10px]">Fallback</span>
+            </span>
+          )}
+
           {engineStatus === 'missing_key' && (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-500/40">
               <span className="w-2 h-2 rounded-full bg-amber-500 dark:bg-amber-400" />
@@ -184,11 +228,19 @@ export function Header({ activeView = 'scanner', onSelectView, isGemmaActive = f
             </span>
           )}
 
-          {engineStatus === 'quota_limited' && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-500/40">
-              <span className="w-2 h-2 rounded-full bg-amber-500" />
-              <span className="hidden sm:inline">Quota Limit</span>
-              <span className="sm:hidden font-mono text-[10px]">Quota</span>
+          {engineStatus === 'running' && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-violet-50 dark:bg-violet-950/60 text-violet-800 dark:text-violet-300 border border-violet-300 dark:border-violet-500/40">
+              <span className="w-2 h-2 rounded-full bg-violet-500 animate-spin" />
+              <span className="hidden sm:inline">Analyzing...</span>
+              <span className="sm:hidden font-mono text-[10px]">Scan</span>
+            </span>
+          )}
+
+          {engineStatus === 'analysis_failed' && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-coral-50 dark:bg-coral-950/60 text-coral-800 dark:text-coral-300 border border-coral-300 dark:border-coral-500/40">
+              <span className="w-2 h-2 rounded-full bg-coral-500" />
+              <span className="hidden sm:inline">Analysis Failed</span>
+              <span className="sm:hidden font-mono text-[10px]">Failed</span>
             </span>
           )}
 

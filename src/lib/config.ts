@@ -1,8 +1,13 @@
+export const ISSUELIFT_REPO_URL = 'https://github.com/rudraarcadeskills-art/IssueLift';
+export const ISSUELIFT_CANONICAL_URL = 'https://issue-lift.vercel.app/';
+
 export const CONFIG = {
   GEMMA_API_KEY: process.env.GEMMA_API_KEY || '',
   GEMMA_MODEL: process.env.GEMMA_MODEL || 'gemma-4-26b-a4b-it',
   GITHUB_TOKEN: process.env.GITHUB_TOKEN || '',
   NODE_ENV: process.env.NODE_ENV || 'development',
+  REPO_URL: ISSUELIFT_REPO_URL,
+  CANONICAL_URL: ISSUELIFT_CANONICAL_URL,
 };
 
 export function isGemmaConfigured(): boolean {

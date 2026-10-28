@@ -52,7 +52,7 @@ export function DeterministicClaimGateCard({ contract }: DeterministicClaimGateC
         </div>
 
         <div className="text-xs font-mono px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-midnight-900 border border-slate-200 dark:border-midnight-700 text-slate-700 dark:text-slate-300">
-          Engine: {contract.ai_configured ? `Gemma 4 (${contract.model_id})` : 'Baseline Compiler'}
+          Engine: {contract.analysis_status === 'gemma_success' ? `Gemma 4 (${contract.model_id})` : contract.analysis_status === 'baseline_fallback' ? 'Baseline Compiler (Gemma Fallback)' : 'Baseline Compiler'}
         </div>
       </div>
 

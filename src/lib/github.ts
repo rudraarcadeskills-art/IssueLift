@@ -457,16 +457,17 @@ export async function fetchLiveIssueAndRepo(
         inspectedFiles.push(testPath);
         inspectedTestFilesSet.add(testPath);
 
-        const hasAssertions = /expect\(|assert\b|\.should\b|\btest\(|\bit\(|\bdescribe\(|assert_eq!|t\.Run\(/i.test(testContent);
+        const inspection = inspectTestContent(testContent, testPath);
 
         sources.push({
           source_id: `test-content-${sources.length + 1}`,
           canonical_url: `https://github.com/${owner}/${repo}/blob/${defaultBranch}/${testPath}`,
           path: testPath,
-          source_type: 'test',
+          source_type: inspection.isAutomatedTest ? 'test' : 'code',
           excerpt: testContent.slice(0, 300),
           verified_exists: true,
           verification_status: 'VERIFIED',
+          rejection_reason: inspection.isAutomatedTest ? undefined : inspection.rationale,
         });
       }
     } catch {
@@ -583,35 +584,100 @@ export function detectLinkedPrSignal(
   };
 }
 
+export interface InspectedTestAnalysis {
+  isAutomatedTest: boolean;
+  hasAssertions: boolean;
+  assertionsFound?: boolean;
+  hasTestRunner: boolean;
+  testRunner?: string;
+  rationale: string;
+}
+
+export function inspectTestContent(content: string, filePath: string): InspectedTestAnalysis {
+  if (!content || content.trim().length === 0) {
+    return {
+      isAutomatedTest: false,
+      hasAssertions: false,
+      hasTestRunner: false,
+      rationale: 'File content was empty or unavailable.',
+    };
+  }
+
+  // Check test runner structure: describe, it, test, suite, pytest test_, go TestXxx
+  const hasTestRunner =
+    /\b(?:describe|it|test|suite)\s*\(/i.test(content) ||
+    /\bdef\s+test_[a-zA-Z0-9_]+\s*\(/i.test(content) ||
+    /\bfunc\s+Test[a-zA-Z0-9_]+\s*\(/i.test(content) ||
+    /\b#\[test\]/i.test(content) ||
+    /\b@Test\b/i.test(content);
+
+  // Check assertions: expect, assert, should, assert_eq!, t.Run, t.Errorf
+  const hasAssertions =
+    /\b(?:expect|assert|assert_eq!|assert_ne!)\b/i.test(content) ||
+    /\b\.should\b/i.test(content) ||
+    /\bt\.(?:Run|Errorf|Fatalf|Equal|True|False)\b/i.test(content);
+
+  // Check if it's an application component (React component, page, layout, route handler)
+  const isComponent =
+    /export\s+default\s+function|export\s+function\s+[A-Z]|export\s+const\s+[A-Z][a-zA-Z0-9]*\s*=\s*\(/i.test(content) &&
+    !hasTestRunner &&
+    !hasAssertions;
+
+  const isAutomatedTest = (hasTestRunner || hasAssertions) && !isComponent;
+
+  const rationale = isAutomatedTest
+    ? `Inspected content confirms automated test runner structure${hasAssertions ? ' and assertions' : ''}.`
+    : isComponent
+    ? `Inspected content is an application/fixture React component (${filePath}), not an automated test suite.`
+    : `Inspected file does not contain automated test runner structure or assertions.`;
+
+  const testRunnerName = isComponent
+    ? 'fixture_component'
+    : hasTestRunner
+    ? 'describe/it'
+    : undefined;
+
+  return {
+    isAutomatedTest,
+    hasAssertions,
+    assertionsFound: hasAssertions,
+    hasTestRunner,
+    testRunner: testRunnerName,
+    rationale,
+  };
+}
+
 export function isLikelyTestFile(filePath: string): boolean {
   if (!filePath || typeof filePath !== 'string') return false;
   const lower = filePath.toLowerCase().replace(/\\/g, '/');
 
-  // 1. Exclude fixture directories, mocks, testdata, snapshot directories
-  // unless the file itself explicitly has a test or spec suffix (e.g. foo.test.ts)
-  const isFixtureOrMockDir = /(?:^|\/)(?:fixtures?|__fixtures__|mocks?|__mocks__|testdata|snapshots?|__snapshots__|samples?|test-fixtures)\//i.test(lower);
+  // 1. Positive matches: explicit test and spec naming conventions
   const hasExplicitTestSuffix =
-    /\.(?:test|spec|_test)\.[a-z0-9]+$/i.test(lower) ||
+    /\.(?:test|spec)\.[a-z0-9]+$/i.test(lower) ||
     /[._-](?:test|spec)\.[a-z0-9]+$/i.test(lower) ||
-    /_test\.(?:go|py|rs)$/i.test(lower);
+    /_test\.(?:go|py|rs)$/i.test(lower) ||
+    /(?:^|\/)test_[a-zA-Z0-9_-]+\.(?:py|rb)$/i.test(lower) ||
+    /[a-zA-Z0-9_-]+Test\.(?:java|kt|scala|php|cs)$/i.test(lower);
 
+  // 2. Exclude fixture directories, mocks, testdata, snapshot directories
+  // unless the file itself explicitly has a test or spec suffix (e.g. foo.test.ts)
+  const isFixtureOrMockDir = /(?:^|\/)(?:fixtures?|__fixtures__|mocks?|__mocks__|testdata|snapshots?|__snapshots__|samples?|test-fixtures|demo-app|example-app)\//i.test(lower);
   if (isFixtureOrMockDir && !hasExplicitTestSuffix) {
     return false;
   }
 
-  // 2. Exclude setup, config, helper, and harness files
-  const filename = lower.split('/').pop() || lower;
-  if (
-    /^(?:setup-?tests?|test-?setup|jest\.setup|vitest\.setup|test-?utils?|test-?helpers?|helpers?|conftest|fixtures?)\.[a-z0-9]+$/i.test(
-      filename
-    )
-  ) {
+  // 3. Exclude sample application subtrees inside test directories (e.g. test/e2e/app-dir/.../app/...)
+  // In frameworks like Next.js, test suites contain nested sample apps in app/, pages/, components/, etc.
+  const isInTestFixtureApp = /(?:^|\/)(?:tests?|__tests__|e2e|development|production)\/.*?\/(?:app|pages|components|routes|views|templates|layouts|public|styles)\//i.test(lower);
+  if (isInTestFixtureApp && !hasExplicitTestSuffix) {
     return false;
   }
 
-  // 3. Exclude typical application component / page files that might live in a fixture or e2e app without a test suffix
+  // 4. Exclude typical application component / page files that might live in a fixture or e2e app without a test suffix
+  // e.g. not-found.tsx, global-not-found.tsx, page.tsx, layout.tsx, error.tsx
+  const filename = lower.split('/').pop() || lower;
   if (
-    /^(?:page|layout|loading|not-found|error|route|template|head|default|middleware)\.(?:tsx|jsx|js|ts)$/i.test(
+    /^(?:page|layout|loading|not-found|error|route|template|head|default|middleware|global-not-found|global-error|instrumentation)\.(?:tsx|jsx|js|ts)$/i.test(
       filename
     ) &&
     !hasExplicitTestSuffix
@@ -619,17 +685,32 @@ export function isLikelyTestFile(filePath: string): boolean {
     return false;
   }
 
-  // 4. Positive matches: explicit test suffixes
+  // 5. Exclude typical React components (.tsx, .jsx) inside test folders that lack explicit .test. or .spec. suffix
+  // In virtually all repositories, components in test folders are test-app fixtures, not the test runners
+  if (/\.(?:tsx|jsx)$/i.test(filename) && !hasExplicitTestSuffix) {
+    return false;
+  }
+
+  // 6. Exclude setup, config, helper, and harness files
+  if (
+    /^(?:setup-?tests?|test-?setup|jest\.setup|vitest\.setup|test-?utils?|test-?helpers?|helpers?|conftest|fixtures?|mock-server|server-handler)\.[a-z0-9]+$/i.test(
+      filename
+    )
+  ) {
+    return false;
+  }
+
+  // 7. If explicit test suffix, it's a test file
   if (hasExplicitTestSuffix) {
     return true;
   }
 
-  // 5. Files inside test/e2e/spec directories: must be an actual test script/suite
+  // 8. Files inside test/e2e/spec directories: only if script/runner file without fixture/app subpaths
   if (/(?:^|\/)(?:tests?|__tests__|e2e|specs?)\//i.test(lower)) {
-    // Only code extensions
-    if (/\.(?:ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|scala|php|cs|cpp|c)$/i.test(lower)) {
-      // Must not be in helper or fixture subpaths
-      if (/(?:fixtures?|mocks?|testdata|helpers?|utils?|samples?)\//i.test(lower)) {
+    // Only code extensions excluding tsx/jsx
+    if (/\.(?:ts|js|mjs|cjs|py|rb|go|rs|java|kt|scala|php|cs|cpp|c)$/i.test(lower)) {
+      // Must not be in helper, fixture, or app subpaths
+      if (/(?:fixtures?|mocks?|testdata|helpers?|utils?|samples?|app|pages|components)\//i.test(lower)) {
         return false;
       }
       return true;
@@ -637,6 +718,162 @@ export function isLikelyTestFile(filePath: string): boolean {
   }
 
   return false;
+}
+
+export function evaluateTestRelevance(
+  testPath: string,
+  inspectedContent: string | undefined,
+  criterionDescription: string,
+  exactQuote?: string
+): { isRelevant: boolean; verdict: 'CONFIRMED_RELEVANT' | 'UNRELATED'; rationale: string } {
+  const combined = `${criterionDescription} ${exactQuote || ''}`.toLowerCase();
+  
+  // Extract key technical domain keywords
+  const domainTokens = new Set<string>();
+  const backtickMatches = combined.match(/`([^`]+)`/g) || [];
+  for (const b of backtickMatches) {
+    const clean = b.replace(/[`()]/g, '').trim().toLowerCase();
+    if (clean.length >= 3) domainTokens.add(clean);
+  }
+
+  const words = combined
+    .split(/[^a-z0-9_-]+/)
+    .filter((w) => w.length >= 4 && !STOP_WORDS.has(w));
+  words.forEach((w) => domainTokens.add(w));
+
+  const lowerPath = testPath.toLowerCase();
+  const lowerContent = (inspectedContent || '').toLowerCase();
+
+  const matchedTokens: string[] = [];
+  for (const token of domainTokens) {
+    if (lowerPath.includes(token) || lowerContent.includes(token)) {
+      matchedTokens.push(token);
+    }
+  }
+
+  // Domain relevance check:
+  // If the criterion specifically is about notFound or not-found handling:
+  const isNotFoundCriterion = combined.includes('notfound') || combined.includes('not-found');
+  let isRelevant = false;
+
+  if (isNotFoundCriterion) {
+    // Must touch not-found or notfound in either path or content
+    const touchesNotFound = lowerPath.includes('not-found') || lowerPath.includes('notfound') || lowerContent.includes('notfound') || lowerContent.includes('not-found');
+    const touchesDynamicOrRender = lowerPath.includes('dynamic') || lowerContent.includes('dynamic') || lowerPath.includes('html') || lowerContent.includes('html') || lowerContent.includes('render') || lowerContent.includes('server') || lowerContent.includes('shell');
+    isRelevant = touchesNotFound && (touchesDynamicOrRender || matchedTokens.length >= 2);
+  } else {
+    isRelevant = matchedTokens.length >= 2;
+  }
+
+  const rationale = isRelevant
+    ? `Test path/content meaningfully verifies acceptance criterion domain (matched: ${matchedTokens.slice(0, 5).join(', ')}).`
+    : `Test path/content (${testPath}) does not verify criterion requirements. No relevant domain match found.`;
+
+  const verdict = isRelevant ? 'CONFIRMED_RELEVANT' : 'UNRELATED';
+  return { isRelevant, verdict, rationale };
+}
+
+export function extractReproductionEnvironment(
+  issueBody: string
+): import('./types').ReproductionEnvironment | undefined {
+  if (!issueBody || issueBody.trim().length === 0) return undefined;
+
+  let reproductionRepoUrl: string | undefined;
+  const steps: import('./types').ReproductionStep[] = [];
+  const commands: string[] = [];
+  const validationScenarios: string[] = [];
+
+  // 1. Look for reproduction repo URL: e.g. https://github.com/molovo/next-notfound-empty-body
+  const ghRepoRegex = /https?:\/\/github\.com\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)(?:\/|\b|$)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = ghRepoRegex.exec(issueBody)) !== null) {
+    const fullUrl = match[0].replace(/\/$/, '');
+    if (!fullUrl.includes('/issues') && !fullUrl.includes('/pull') && !fullUrl.includes('/commit')) {
+      if (!reproductionRepoUrl) {
+        reproductionRepoUrl = fullUrl;
+      }
+    }
+  }
+
+  const reproLinkMatch = issueBody.match(/(?:reproduction\s+(?:link|repo|url|code)|link\s+to\s+(?:the\s+)?code)[^\n]*\n+([^\n]+)/i);
+  if (reproLinkMatch) {
+    const urlInMatch = reproLinkMatch[1].match(/https?:\/\/github\.com\/[^\s\)]+/i);
+    if (urlInMatch) {
+      reproductionRepoUrl = urlInMatch[0].replace(/\/$/, '');
+    }
+  }
+
+  // 2. Extract reproduction steps from "To Reproduce" / "Steps to Reproduce" section
+  const reproSectionRegex = /^#{1,4}\s*(?:to\s+reproduce|steps\s+to\s+reproduce|how\s+to\s+reproduce|reproduction\s+steps)/i;
+  const lines = issueBody.split('\n');
+  let inReproSection = false;
+  const reproLines: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (reproSectionRegex.test(trimmed)) {
+      inReproSection = true;
+      continue;
+    }
+    if (inReproSection) {
+      if (/^#{1,4}\s+/.test(trimmed)) {
+        inReproSection = false;
+      } else if (trimmed.length > 0) {
+        reproLines.push(trimmed);
+      }
+    }
+  }
+
+  // Process repro lines
+  let stepIdx = 0;
+  for (const rLine of reproLines) {
+    const cleanLine = rLine.replace(/^(?:\d+[\.\)]|\*|-|\- \[[ x]\])\s*/, '').trim();
+    if (cleanLine.length < 3) continue;
+
+    stepIdx++;
+    const codeMatch = cleanLine.match(/`([^`]+)`/);
+    const potentialCmd = codeMatch ? codeMatch[1].trim() : undefined;
+
+    const isCurl = /curl\s+-/i.test(cleanLine) || (potentialCmd && /curl\s+-/i.test(potentialCmd));
+    if (isCurl) {
+      const curlCmd = potentialCmd || (cleanLine.match(/(curl\s+[^\s\)]+)/i)?.[1] || cleanLine);
+      validationScenarios.push(curlCmd);
+      steps.push({
+        step_number: stepIdx,
+        instruction: cleanLine,
+        command: curlCmd,
+        is_validation_scenario: true,
+        provenance: 'Issue description reproduction steps',
+      });
+    } else {
+      const hasNpm = /npm\s+(?:install|run|start|build)|pnpm\s+|yarn\s+|cargo\s+/i.test(cleanLine);
+      steps.push({
+        step_number: stepIdx,
+        instruction: cleanLine,
+        command: potentialCmd && hasNpm ? potentialCmd : undefined,
+        is_validation_scenario: false,
+        provenance: 'Issue description reproduction steps',
+      });
+
+      if (potentialCmd && hasNpm) {
+        commands.push(potentialCmd);
+      }
+    }
+  }
+
+  if (!reproductionRepoUrl && steps.length === 0 && commands.length === 0) {
+    return undefined;
+  }
+
+  return {
+    reproduction_repo_url: reproductionRepoUrl,
+    reproduction_steps: steps,
+    reproduction_commands: commands,
+    manual_validation_scenarios: validationScenarios,
+    notes: reproductionRepoUrl
+      ? `Reproduction project: ${reproductionRepoUrl}. Reproduction commands belong strictly to the reproduction app and are not target repository package scripts. Commands were not executed by IssueLift.`
+      : 'Reproduction steps identified from issue description. Commands were not executed by IssueLift.',
+  };
 }
 
 export type PackageManager = 'pnpm' | 'yarn' | 'npm' | 'bun' | 'cargo' | 'go' | 'pip' | 'poetry' | 'unknown';

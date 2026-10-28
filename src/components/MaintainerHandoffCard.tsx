@@ -4,6 +4,8 @@ import React, { useState } from 'react';
 import { MaintainerHandoff } from '@/lib/types';
 import { MessageSquareText, Copy, Check, Edit3, AlertCircle } from 'lucide-react';
 
+import { ISSUELIFT_REPO_URL } from '@/lib/config';
+
 interface MaintainerHandoffCardProps {
   handoff: MaintainerHandoff;
   issueNumber: number;
@@ -31,7 +33,7 @@ export function MaintainerHandoffCard({
     proposedCriteria ? `### Proposed Acceptance Criteria:\n${proposedCriteria}\n\n` : ''
   }${
     validationPlan ? `### Verification Plan:\n${validationPlan}\n\n` : ''
-  }_Note: Prepared with [IssueLift](https://github.com/rudraarcadeskills-art/IssueLift.git) (pre-contribution evidence check)._`;
+  }_Note: Prepared with [IssueLift](${ISSUELIFT_REPO_URL}) (pre-contribution evidence check)._`;
 
   const copyQuestion = () => {
     navigator.clipboard.writeText(question);
