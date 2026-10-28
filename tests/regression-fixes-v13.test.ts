@@ -222,6 +222,204 @@ describe('BUG 1 — Acceptance Criteria are not Reproduction Steps', () => {
   });
 });
 
+describe('BUG 1B — Actual Next.js Issue #100596 Structure with Inline Expected: Label', () => {
+  const ACTUAL_NEXTJS_100596_BODY = `### Link to the code that reproduces this issue
+
+https://github.com/molovo/next-notfound-empty-body
+
+### To Reproduce
+
+1. Clone the repo, then run \`npm install && npm run build && npm run start\`.
+2. Run \`curl -s http://localhost:3000/nope\`. \`app/[slug]/page.tsx\` calls \`notFound()\` for any slug other than \`known\`, the one \`generateStaticParams\` returns.
+3. For comparison, run \`curl -s http://localhost:3000/this/does/not/exist\`, which matches no route.
+
+The repro is \`create-next-app@16.3.8\` (first commit) plus \`app/[slug]/page.tsx\` and \`app/not-found.tsx\` (second commit).
+
+### Current vs. Expected behavior
+
+**Current:** \`/nope\` responds \`404\` with:
+
+\`\`\`html
+<html id="__next_error__"><head>…</head><body><div hidden=""><!--$--><!--/$--></div><script>…</script></body></html>
+\`\`\`
+
+The root layout and \`app/not-found.tsx\` (\`<h1>Custom not-found copy</h1>\`) appear only inside the inline RSC payload, so they render only after hydration. With JavaScript disabled, the page is blank.
+
+\`/this/does/not/exist\` responds \`404\` with the root layout's \`<html lang="en" …>\` and \`<h1>Custom not-found copy</h1>\` in \`<body>\`, as expected.
+
+**Expected:** a \`notFound()\` thrown while rendering a dynamic segment should server-render the not-found boundary inside the layout, the same as an unmatched route, so the 404 copy is in the initial HTML for no-JS visitors and crawlers.
+
+The same happens with \`cacheComponents: true\`, and with the root layout under a dynamic \`[lang]\` segment, which is where we first saw it on a production site. It reproduces on \`16.3.8\` and on \`16.5.0-canary.23\`.
+
+### Provide environment information
+
+\`\`\`bash
+Operating System:
+  Platform: darwin
+  Arch: arm64
+  Version: Darwin Kernel Version 25.6.0
+Binaries:
+  Node: 20.20.2
+  npm: 10.8.2
+Relevant Packages:
+  next: 16.3.8 (also 16.5.0-canary.23)
+  react: 19.2.8
+  react-dom: 19.2.8
+  typescript: 5.9.3
+\`\`\`
+
+### Which area(s) are affected? (Select all that apply)
+
+Error Handling, Not Found
+
+### Which stage(s) are affected? (Select all that apply)
+
+next build (local), next start (local)
+
+### Additional context
+
+The response looks like Next's error-recovery shell (<html id="__next_error__">, as produced by getErrorRSCPayload in app-render). That suggests the notFound() thrown during SSR isn't caught by the HTTP access fallback boundary in the shell, so the whole shell falls back to the error document. Only the RSC payload gets the not-found tree.`;
+
+  it('correctly recognizes inline **Expected:** label and extracts expected-behaviour text from real issue #100596', () => {
+    const criteria = extractExplicitCriteria(ACTUAL_NEXTJS_100596_BODY, mockMetadata.url, mockSetupTruth.test_command);
+
+    expect(criteria.length).toBeGreaterThan(0);
+    const crit = criteria[0];
+
+    // Description is the expected-behaviour text
+    expect(crit.description).toContain('a `notFound()` thrown while rendering a dynamic segment should server-render the not-found boundary inside the layout');
+    // Does NOT contain trailing reproduction text
+    expect(crit.description).not.toContain('The same happens with');
+    expect(crit.description).not.toContain('It reproduces on');
+
+    // Classified as EXPLICIT with verbatim quote in original text
+    expect(crit.criterion_type).toBe('EXPLICIT');
+    expect(crit.exact_quote).toBeDefined();
+    expect(ACTUAL_NEXTJS_100596_BODY).toContain(crit.exact_quote!);
+    expect(crit.exact_quote).toContain('a `notFound()` thrown while rendering a dynamic segment should server-render the not-found boundary inside the layout');
+
+    // Never extracts Current: description or commands as criteria
+    expect(criteria.some((c) => c.description.includes('/nope responds 404'))).toBe(false);
+    expect(criteria.some((c) => c.description.includes('__next_error__'))).toBe(false);
+    expect(criteria.some((c) => c.description.includes('curl -s'))).toBe(false);
+    expect(criteria.some((c) => c.description.includes('npm install'))).toBe(false);
+  });
+
+  it('compiles contract with explicit expected-behaviour criterion and validates claim gate verdict', () => {
+    const contract = compileDeterministicBaselineContract(
+      { ...mockMetadata, body: ACTUAL_NEXTJS_100596_BODY },
+      mockSources,
+      ['packages/next/src/server/app-render/app-render.tsx'],
+      mockSetupTruth,
+      mockScanBoundaries
+    );
+
+    expect(contract.criteria.length).toBeGreaterThan(0);
+    const primaryCrit = contract.criteria[0];
+    expect(primaryCrit.criterion_type).toBe('EXPLICIT');
+    expect(primaryCrit.exact_quote).toBeDefined();
+    expect(ACTUAL_NEXTJS_100596_BODY).toContain(primaryCrit.exact_quote!);
+    expect(primaryCrit.description).toContain('server-render the not-found boundary inside the layout');
+
+    // None of the criteria are Current: or reproduction commands
+    for (const c of contract.criteria) {
+      expect(c.description).not.toContain('/nope responds 404');
+      expect(c.description).not.toContain('curl -s');
+      expect(c.description).not.toContain('npm install');
+    }
+  });
+
+  it('handles missing Expected sections by keeping criteria AI-PROPOSED without forcing EXPLICIT', () => {
+    const missingExpectedBody = `### Description
+The server crashes when an invalid query parameter is provided.
+
+### Current behavior
+The process terminates with an unhandled rejection.
+
+### Environment
+Node 20.x, Next.js 15.0.0`;
+
+    const criteria = extractExplicitCriteria(missingExpectedBody, 'https://github.com/vercel/next.js/issues/99999', undefined);
+    expect(criteria.length).toBe(0);
+
+    const contract = compileDeterministicBaselineContract(
+      { ...mockMetadata, body: missingExpectedBody },
+      mockSources,
+      ['package.json'],
+      mockSetupTruth,
+      mockScanBoundaries
+    );
+
+    expect(contract.criteria.length).toBe(1);
+    expect(contract.criteria[0].criterion_type).toBe('AI-PROPOSED');
+    expect(contract.criteria[0].exact_quote).toBeUndefined();
+    // Does not force to EXPLICIT
+    expect(contract.criteria.every((c) => c.criterion_type === 'AI-PROPOSED')).toBe(true);
+  });
+
+  it('handles reproduction-only issues without extracting reproduction steps, setup commands, or curl commands', () => {
+    const reproOnlyBody = `### Steps to Reproduce
+1. Clone the repository with \`git clone https://github.com/example/repro\`
+2. Run \`npm install\` to install dependencies
+3. Run \`npm run build && npm run start\`
+4. Execute \`curl -s http://localhost:3000/api/test\`
+5. Notice that error code 500 is returned`;
+
+    const criteria = extractExplicitCriteria(reproOnlyBody, 'https://github.com/vercel/next.js/issues/88888', undefined);
+    expect(criteria.length).toBe(0);
+
+    const contract = compileDeterministicBaselineContract(
+      { ...mockMetadata, body: reproOnlyBody },
+      mockSources,
+      ['package.json'],
+      mockSetupTruth,
+      mockScanBoundaries
+    );
+
+    // Baseline creates AI-PROPOSED criterion from title
+    expect(contract.criteria.length).toBe(1);
+    expect(contract.criteria[0].criterion_type).toBe('AI-PROPOSED');
+    expect(contract.criteria[0].exact_quote).toBeUndefined();
+    expect(contract.criteria.some((c) => c.description.includes('git clone'))).toBe(false);
+    expect(contract.criteria.some((c) => c.description.includes('curl -s'))).toBe(false);
+  });
+
+  it('demotes criterion to AI-PROPOSED when verbatim quote cannot be validated or is from Current section', () => {
+    const issueWithCurrent = `### Current vs. Expected behavior
+**Current:**
+When notFound() is thrown, the boundary is rendered as a standalone page without any layout.`;
+
+    const criterionWithCurrentQuote: AcceptanceCriterion = {
+      id: 'AC-01',
+      description: 'The boundary is rendered as a standalone page without any layout',
+      criterion_type: 'EXPLICIT',
+      exact_quote: 'the boundary is rendered as a standalone page without any layout',
+      status: 'ACTIONABLE',
+      status_rationale: 'Testing current behavior rejection',
+      needs_maintainer_clarification: false,
+      candidate_implementation_files: [],
+      test_evidence: {
+        status: 'NO TEST EVIDENCE FOUND IN SCANNED FILES',
+        candidate_test_files: [],
+        rationale: 'None',
+      },
+    };
+
+    const gateResult = runDeterministicClaimGate(
+      [criterionWithCurrentQuote],
+      mockSources,
+      ['package.json'],
+      { ...mockMetadata, body: issueWithCurrent },
+      mockScanBoundaries,
+      mockSetupTruth
+    );
+
+    // Demoted because quote is from Current: section
+    expect(gateResult.validatedCriteria[0].criterion_type).toBe('AI-PROPOSED');
+    expect(gateResult.audit.warnings.some((w) => w.includes('current behavior description') || w.includes('demoted to AI-PROPOSED'))).toBe(true);
+  });
+});
+
 describe('BUG 2 — False-Positive Test Evidence Detection', () => {
   it('does not classify fixture/application React components under test/ as automated tests', () => {
     const fixture1 = 'test/e2e/app-dir/global-not-found/no-root-layout/app/global-not-found.tsx';

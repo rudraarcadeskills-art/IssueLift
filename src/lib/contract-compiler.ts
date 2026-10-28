@@ -28,16 +28,33 @@ export function extractExplicitCriteria(
   if (!body || body.trim().length === 0) return [];
 
   const criteria: AcceptanceCriterion[] = [];
-  const lines = body.split('\n');
+  const normalizedBody = body.replace(/\r\n/g, '\n');
+  const lines = normalizedBody.split('\n');
 
   // Regex to detect reproduction sections that should NEVER yield acceptance criteria
   const reproSectionRegex = /^#{1,4}\s*(?:to\s+reproduce|steps\s+to\s+reproduce|how\s+to\s+reproduce|reproduction\s+steps)/i;
-  // Regex to detect expected behavior / acceptance criteria sections
-  const expectedSectionRegex = /^#{1,4}\s*(?:.*?(?:expected\s+(?:behavior|result|outcome|behaviour)|acceptance\s+criteria|definition\s+of\s+done|what\s+should\s+happen\??)|expected(?:\s*[:\-])?$)/i;
+  // Regex to detect expected behavior / acceptance criteria section headings
+  const expectedSectionHeaderRegex = /^#{1,4}\s*(?:.*?(?:expected\s+(?:behavior|result|outcome|behaviour)|acceptance\s+criteria|definition\s+of\s+done|what\s+should\s+happen\??)|expected(?:\s*[:\-])?$)/i;
 
-  let inExpectedSection = false;
+  // Patterns for inline Expected and Current markers
+  const expectedInlineMarkerRegex = /^\s*(?:\*{1,2}|_{1,2})?\s*expected(?:\s+(?:behavior|result|outcome|behaviour))?\s*[:\-]?(?:\*{1,2}|_{1,2})?\s*[:\-]?\s*(.*)$/i;
+  const currentInlineMarkerRegex = /^\s*(?:\*{1,2}|_{1,2})?\s*(?:current|actual)(?:\s+(?:behavior|result|outcome|behaviour))?\s*[:\-]?(?:\*{1,2}|_{1,2})?\s*[:\-]?/i;
+
+  const isCommandOrReproLine = (line: string): boolean => {
+    const trimmed = line.trim();
+    return (
+      /^(?:npm|pnpm|yarn|bun|npx|curl|git clone|git\s|cd\s)\b/i.test(trimmed) ||
+      /curl\s+-s/i.test(trimmed) ||
+      /^clone the repo/i.test(trimmed) ||
+      /^https?:\/\/\S+$/i.test(trimmed) ||
+      /^```/i.test(trimmed)
+    );
+  };
+
   let inReproSection = false;
-  const expectedSectionLines: string[] = [];
+  let inExpectedSection = false;
+  let readingExpectedInline = false;
+  const expectedInlineLines: string[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i];
@@ -46,148 +63,165 @@ export function extractExplicitCriteria(
     if (reproSectionRegex.test(trimmed)) {
       inReproSection = true;
       inExpectedSection = false;
-      continue;
-    }
-
-    if (expectedSectionRegex.test(trimmed)) {
-      inExpectedSection = true;
-      inReproSection = false;
+      readingExpectedInline = false;
       continue;
     }
 
     if (trimmed.startsWith('#')) {
-      inExpectedSection = false;
       inReproSection = false;
+      readingExpectedInline = false;
+      if (expectedSectionHeaderRegex.test(trimmed)) {
+        inExpectedSection = true;
+      } else {
+        inExpectedSection = false;
+      }
       continue;
     }
 
-    if (inExpectedSection && trimmed.length > 0) {
-      expectedSectionLines.push(trimmed);
+    // Never extract criteria from reproduction sections
+    if (inReproSection) {
+      continue;
     }
-  }
 
-  // 1. If inside an expected section (e.g. "Current vs. Expected behavior" or "Expected Behavior")
-  if (expectedSectionLines.length > 0) {
-    // Check if section contains Current vs Expected pattern
-    const hasCurrentMarker = expectedSectionLines.some((l) => /^\s*\*{0,2}current(?:\s+behavior)?:\*{0,2}\s*$/i.test(l));
-    const hasExpectedMarker = expectedSectionLines.some((l) => /^\s*\*{0,2}expected(?:\s+behavior)?:\*{0,2}/i.test(l));
-
-    if (hasCurrentMarker || hasExpectedMarker) {
-      let readingExpected = false;
-      const expectedLines: string[] = [];
-
-      for (const l of expectedSectionLines) {
-        if (/^\s*\*{0,2}expected(?:\s+behavior)?:\*{0,2}/i.test(l)) {
-          readingExpected = true;
-          const inlineContent = l.replace(/^\s*\*{0,2}expected(?:\s+behavior)?:\*{0,2}\s*/i, '').trim();
-          if (inlineContent.length > 0) {
-            expectedLines.push(inlineContent);
-          }
-          continue;
-        }
-        if (/^\s*\*{0,2}current(?:\s+behavior)?:\*{0,2}/i.test(l)) {
-          readingExpected = false;
-          continue;
-        }
-        if (readingExpected) {
-          if (l.trim().length > 0 && !l.startsWith('```') && !l.startsWith('#')) {
-            expectedLines.push(l.trim());
-          }
-        }
+    // Check for inline Expected label (e.g. **Expected:**, Expected:, etc.)
+    const expectedMatch = trimmed.match(expectedInlineMarkerRegex);
+    if (expectedMatch) {
+      readingExpectedInline = true;
+      let inlineContent = expectedMatch[1].trim();
+      // Remove any residual markdown formatting or leading punctuation
+      inlineContent = inlineContent.replace(/^[\s*_:\-]+|[\s*_:\-]+$/g, '').trim();
+      if (inlineContent.length > 0 && !isCommandOrReproLine(inlineContent)) {
+        expectedInlineLines.push(inlineContent);
       }
-
-      if (expectedLines.length > 0) {
-        const fullExpectedText = expectedLines.join(' ');
-        criteria.push({
-          id: `AC-${String(criteria.length + 1).padStart(2, '0')}`,
-          description: fullExpectedText,
-          criterion_type: 'EXPLICIT',
-          exact_quote: expectedLines[0], // Verbatim line in original text
-          source_url: issueUrl,
-          status: 'ACTIONABLE',
-          status_rationale: 'Extracted verbatim from explicit expected-behavior section in issue description.',
-          needs_maintainer_clarification: false,
-          candidate_implementation_files: [],
-          test_evidence: {
-            status: 'NO TEST EVIDENCE FOUND IN SCANNED FILES',
-            candidate_test_files: [],
-            rationale: 'Candidate test files mapped from repository tree index.',
-            proposed_manual_validation: `Manually verify expected behavior before submitting pull request.`,
-            test_executed: false,
-          },
-          test_command: testCommand,
-        });
-        return criteria;
-      }
-    } else {
-      for (const line of expectedSectionLines) {
-        if (/^(?:npm|pnpm|yarn|bun|curl|git|cd)\b/i.test(line)) continue;
-        const clean = line.replace(/^(- \[[ x]\]|\* |- |\d+\. )/, '').trim();
-        if (/^\*{0,2}(?:current|expected)(?:\s+behavior)?:\*{0,2}$/i.test(clean)) continue;
-        if (clean.length > 5 && !clean.startsWith('```') && !clean.startsWith('<')) {
-          criteria.push({
-            id: `AC-${String(criteria.length + 1).padStart(2, '0')}`,
-            description: clean,
-            criterion_type: 'EXPLICIT',
-            exact_quote: line,
-            source_url: issueUrl,
-            status: 'ACTIONABLE',
-            status_rationale: 'Extracted verbatim from explicit expected-behavior section in issue description.',
-            needs_maintainer_clarification: false,
-            candidate_implementation_files: [],
-            test_evidence: {
-              status: 'NO TEST EVIDENCE FOUND IN SCANNED FILES',
-              candidate_test_files: [],
-              rationale: 'Candidate test files mapped from repository tree index.',
-              proposed_manual_validation: `Manually verify "${clean}" before submitting pull request.`,
-              test_executed: false,
-            },
-            test_command: testCommand,
-          });
-          if (criteria.length >= 5) break;
-        }
-      }
+      continue;
     }
-  }
 
-  // 2. If no expected section, check for markdown task lists outside reproduction sections
-  if (criteria.length === 0) {
-    let currentIsRepro = false;
-    const taskLines: string[] = [];
+    // Check for inline Current / Actual marker
+    if (currentInlineMarkerRegex.test(trimmed)) {
+      readingExpectedInline = false;
+      continue;
+    }
 
-    for (const rawLine of lines) {
-      const trimmed = rawLine.trim();
-      if (reproSectionRegex.test(trimmed)) {
-        currentIsRepro = true;
+    // If reading expected inline content
+    if (readingExpectedInline) {
+      // Empty line terminates the expected paragraph (prevents reading trailing repro/version notes)
+      if (trimmed.length === 0) {
+        readingExpectedInline = false;
         continue;
       }
-      if (trimmed.startsWith('#')) {
-        currentIsRepro = false;
-      }
-      if (!currentIsRepro) {
-        // Only consider markdown checkboxes (- [ ]) or bullets that are NOT numbered reproduction steps or commands
-        const isCheckbox = /^- \[[ x]\]\s*(.+)/.test(trimmed);
-        const isBullet = /^[\*-]\s+(.+)/.test(trimmed);
-        // Exclude lines with curl or package manager commands
-        const isCommand = /^(?:npm|pnpm|yarn|bun|curl|git|cd)\b/i.test(trimmed.replace(/^[-*]\s+/, '')) || /curl\s+-s/i.test(trimmed);
 
-        if ((isCheckbox || isBullet) && !isCommand) {
-          taskLines.push(trimmed);
+      // Stop if line indicates reproduction / version notes or curl / commands
+      if (/^(?:the same happens with|it reproduces on|reproduces on|tested on|reproduction:)\b/i.test(trimmed)) {
+        readingExpectedInline = false;
+        continue;
+      }
+
+      if (!isCommandOrReproLine(trimmed) && !trimmed.startsWith('#') && !trimmed.startsWith('<')) {
+        expectedInlineLines.push(trimmed);
+      }
+      continue;
+    }
+  }
+
+  // 1. If inline expected behavior was found
+  if (expectedInlineLines.length > 0) {
+    const fullExpectedText = expectedInlineLines.join(' ');
+    // Find verbatim quote in original issue text
+    let exactQuote: string | undefined = undefined;
+
+    const bodyContains = (text: string) => body.includes(text) || normalizedBody.includes(text);
+
+    if (bodyContains(expectedInlineLines[0])) {
+      exactQuote = expectedInlineLines[0];
+    } else if (bodyContains(fullExpectedText)) {
+      exactQuote = fullExpectedText;
+    } else {
+      for (const line of expectedInlineLines) {
+        if (line.length > 10 && bodyContains(line)) {
+          exactQuote = line;
+          break;
         }
       }
     }
 
-    taskLines.slice(0, 5).forEach((line) => {
-      const clean = line.replace(/^(- \[[ x]\]|\* |- )/, '').trim();
+    const isVerbatim = Boolean(exactQuote && exactQuote.trim().length > 5 && bodyContains(exactQuote));
+    const criterionType = isVerbatim ? 'EXPLICIT' : 'AI-PROPOSED';
+
+    criteria.push({
+      id: `AC-${String(criteria.length + 1).padStart(2, '0')}`,
+      description: fullExpectedText,
+      criterion_type: criterionType,
+      exact_quote: isVerbatim ? exactQuote : undefined,
+      source_url: issueUrl,
+      status: 'ACTIONABLE',
+      status_rationale: isVerbatim
+        ? 'Extracted verbatim from explicit expected-behavior in issue description.'
+        : 'Proposed from expected behavior section; verbatim quote not confirmed.',
+      needs_maintainer_clarification: false,
+      candidate_implementation_files: [],
+      test_evidence: {
+        status: 'NO TEST EVIDENCE FOUND IN SCANNED FILES',
+        candidate_test_files: [],
+        rationale: 'Candidate test files mapped from repository tree index.',
+        proposed_manual_validation: `Manually verify expected behavior before submitting pull request.`,
+        test_executed: false,
+      },
+      test_command: testCommand,
+    });
+    return criteria;
+  }
+
+  // 2. If inside a standalone expected section (not Current vs Expected)
+  let standaloneExpectedLines: string[] = [];
+  let inStandaloneExpected = false;
+  let inStandaloneRepro = false;
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (reproSectionRegex.test(trimmed)) {
+      inStandaloneRepro = true;
+      inStandaloneExpected = false;
+      continue;
+    }
+    if (trimmed.startsWith('#')) {
+      inStandaloneRepro = false;
+      // Standalone Expected heading (excluding sections with "Current")
+      if (expectedSectionHeaderRegex.test(trimmed) && !/current/i.test(trimmed)) {
+        inStandaloneExpected = true;
+      } else {
+        inStandaloneExpected = false;
+      }
+      continue;
+    }
+    if (inStandaloneRepro) continue;
+    if (inStandaloneExpected && trimmed.length > 0) {
+      if (currentInlineMarkerRegex.test(trimmed)) {
+        inStandaloneExpected = false;
+        continue;
+      }
+      if (!isCommandOrReproLine(trimmed) && !trimmed.startsWith('<')) {
+        standaloneExpectedLines.push(trimmed);
+      }
+    }
+  }
+
+  if (standaloneExpectedLines.length > 0) {
+    for (const line of standaloneExpectedLines) {
+      const clean = line.replace(/^(- \[[ x]\]|\* |- |\d+\. )/, '').trim();
       if (clean.length > 5) {
+        const bodyContains = (text: string) => body.includes(text) || normalizedBody.includes(text);
+        const quoteToUse = bodyContains(line) ? line : (bodyContains(clean) ? clean : undefined);
+        const isVerbatim = Boolean(quoteToUse && quoteToUse.trim().length > 5);
         criteria.push({
           id: `AC-${String(criteria.length + 1).padStart(2, '0')}`,
           description: clean,
-          criterion_type: 'EXPLICIT',
-          exact_quote: line,
+          criterion_type: isVerbatim ? 'EXPLICIT' : 'AI-PROPOSED',
+          exact_quote: isVerbatim ? quoteToUse : undefined,
           source_url: issueUrl,
           status: 'ACTIONABLE',
-          status_rationale: 'Extracted directly from issue task list.',
+          status_rationale: isVerbatim
+            ? 'Extracted verbatim from explicit expected-behavior section in issue description.'
+            : 'Proposed from expected-behavior section; verbatim quote not confirmed.',
           needs_maintainer_clarification: false,
           candidate_implementation_files: [],
           test_evidence: {
@@ -199,9 +233,59 @@ export function extractExplicitCriteria(
           },
           test_command: testCommand,
         });
+        if (criteria.length >= 5) break;
       }
-    });
+    }
+    if (criteria.length > 0) return criteria;
   }
+
+  // 3. Task lists outside reproduction sections
+  let taskCurrentIsRepro = false;
+  const taskLines: string[] = [];
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (reproSectionRegex.test(trimmed)) {
+      taskCurrentIsRepro = true;
+      continue;
+    }
+    if (trimmed.startsWith('#')) {
+      taskCurrentIsRepro = false;
+    }
+    if (!taskCurrentIsRepro) {
+      const isCheckbox = /^- \[[ x]\]\s*(.+)/.test(trimmed);
+      const isBullet = /^[\*-]\s+(.+)/.test(trimmed);
+      if ((isCheckbox || isBullet) && !isCommandOrReproLine(trimmed)) {
+        taskLines.push(trimmed);
+      }
+    }
+  }
+
+  taskLines.slice(0, 5).forEach((line) => {
+    const clean = line.replace(/^(- \[[ x]\]|\* |- )/, '').trim();
+    if (clean.length > 5) {
+      const isVerbatim = body.includes(line);
+      criteria.push({
+        id: `AC-${String(criteria.length + 1).padStart(2, '0')}`,
+        description: clean,
+        criterion_type: isVerbatim ? 'EXPLICIT' : 'AI-PROPOSED',
+        exact_quote: isVerbatim ? line : undefined,
+        source_url: issueUrl,
+        status: 'ACTIONABLE',
+        status_rationale: 'Extracted directly from issue task list.',
+        needs_maintainer_clarification: false,
+        candidate_implementation_files: [],
+        test_evidence: {
+          status: 'NO TEST EVIDENCE FOUND IN SCANNED FILES',
+          candidate_test_files: [],
+          rationale: 'Candidate test files mapped from repository tree index.',
+          proposed_manual_validation: `Manually verify "${clean}" before submitting pull request.`,
+          test_executed: false,
+        },
+        test_command: testCommand,
+      });
+    }
+  });
 
   return criteria;
 }
@@ -265,9 +349,57 @@ export async function compileContributionContract(
         .map((s) => [s.path, s.excerpt])
     );
 
-    // Convert AI criteria to AcceptanceCriterion format
-    const rawCriteria: AcceptanceCriterion[] = aiData.criteria.map((c, idx) => {
-      const id = c.id || `AC-${String(idx + 1).padStart(2, '0')}`;
+    // Extract deterministic explicit criteria from issue body
+    const explicitCriteria = extractExplicitCriteria(
+      metadata.body,
+      metadata.url,
+      setupTruth.test_command
+    );
+
+    let rawCriteriaInputs: Array<{
+      id?: string;
+      description: string;
+      criterion_type: 'EXPLICIT' | 'AI-PROPOSED';
+      exact_quote?: string;
+      status: import('./types').CriterionStatus;
+      status_rationale: string;
+      candidate_files?: Array<{ path: string; relevance_rationale: string; source_id: string }>;
+      test_evidence?: any;
+    }> = aiData.criteria;
+
+    if (explicitCriteria.length > 0) {
+      const explicitRaw = explicitCriteria.map((ec, idx) => ({
+        id: `AC-${String(idx + 1).padStart(2, '0')}`,
+        description: ec.description,
+        criterion_type: ec.criterion_type,
+        exact_quote: ec.exact_quote,
+        status: ec.status,
+        status_rationale: ec.status_rationale,
+        candidate_files: ec.candidate_implementation_files.map((cf) => ({
+          path: cf.path,
+          relevance_rationale: cf.relevance_rationale,
+          source_id: cf.source_id,
+        })),
+        test_evidence: ec.test_evidence,
+      }));
+
+      // Filter remaining AI criteria so they don't redundantly repeat the explicit expected behavior
+      const remainingAi = aiData.criteria.filter((ac) => {
+        const descLower = ac.description.toLowerCase();
+        return !explicitCriteria.some((ec) =>
+          descLower.includes(ec.description.toLowerCase().slice(0, 30))
+        );
+      });
+
+      rawCriteriaInputs = [
+        ...explicitRaw,
+        ...remainingAi.slice(0, Math.max(3, 4 - explicitRaw.length)),
+      ];
+    }
+
+    // Convert criteria to AcceptanceCriterion format
+    const rawCriteria: AcceptanceCriterion[] = rawCriteriaInputs.map((c, idx) => {
+      const id = `AC-${String(idx + 1).padStart(2, '0')}`;
 
       // Candidate implementation files: preserve AI proposed or map from ranked tree
       let candidateImplFiles: CandidateFile[] = (c.candidate_files || []).map((f) => ({
@@ -299,7 +431,7 @@ export async function compileContributionContract(
       }
 
       // Test evidence: preserve AI proposed or map from ranked tree
-      let candidateTestFiles: CandidateTestFile[] = (c.test_evidence?.candidate_test_files || []).map((t) => {
+      let candidateTestFiles: CandidateTestFile[] = (c.test_evidence?.candidate_test_files || []).map((t: CandidateTestFile) => {
         const isInspected = inspectedTestMap.has(t.path);
         const excerpt = inspectedTestMap.get(t.path);
         const relevance = isInspected

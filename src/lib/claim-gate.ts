@@ -75,7 +75,7 @@ export function runDeterministicClaimGate(
 
     // Reject reproduction / setup command patterns
     if (
-      /^(?:npm|pnpm|yarn|bun|npx|curl|git clone|cd\s)\b/i.test(quote.trim()) ||
+      /^(?:npm|pnpm|yarn|bun|npx|curl|git clone|git\s|cd\s)\b/i.test(quote.trim()) ||
       /^clone the repo/i.test(quote.trim()) ||
       /npm install/i.test(quote.trim()) ||
       /npm run/i.test(quote.trim()) ||
@@ -95,6 +95,17 @@ export function runDeterministicClaimGate(
       }
     }
 
+    // Check if quote originates from Current / Actual behavior descriptions (and does not appear elsewhere)
+    const currentSectionRegex = /(?:(?:\*{1,2}|_{1,2})?\s*(?:current|actual)(?:\s+(?:behavior|result|outcome|behaviour))?\s*(?:[:\-](?:\*{1,2}|_{1,2})|(?:\*{1,2}|_{1,2})?[:\-])|(?:^|\n)#{1,4}\s*(?:current|actual)\s*(?:behavior|result|outcome|behaviour)?\s*\n)([\s\S]*?)(?:(?:\*{1,2}|_{1,2})?\s*expected(?:\s+(?:behavior|result|outcome|behaviour))?\s*(?:[:\-](?:\*{1,2}|_{1,2})|(?:\*{1,2}|_{1,2})?[:\-])|(?:^|\n)#{1,4}\s+|$)/i;
+    const currentMatch = issueBody.match(currentSectionRegex);
+    if (currentMatch) {
+      const currentText = currentMatch[1].toLowerCase();
+      const bodyWithoutCurrent = issueBody.toLowerCase().replace(currentText, '');
+      if (currentText.includes(q) && !bodyWithoutCurrent.includes(q)) {
+        return true;
+      }
+    }
+
     return false;
   }
 
@@ -102,7 +113,7 @@ export function runDeterministicClaimGate(
   const validatedCriteria: AcceptanceCriterion[] = rawCriteria.map((criterion, idx) => {
     const id = criterion.id || `AC-${String(idx + 1).padStart(2, '0')}`;
     
-    // Explicit vs Inferred: ensure exact quote actually exists in issue body or comments, and is NOT a repro step or command
+    // Explicit vs Inferred: ensure exact quote actually exists in issue body or comments, and is NOT a repro step, command, or current description
     const allIssueText = `${metadata.body}\n${(metadata.comments || []).map((c) => c.body).join('\n')}`.toLowerCase();
     const quoteInBody = Boolean(
       criterion.exact_quote &&
@@ -115,7 +126,7 @@ export function runDeterministicClaimGate(
 
     if (criterion.criterion_type === 'EXPLICIT' && !isExplicit) {
       if (isReproOrCommand) {
-        warnings.push(`Claim Gate: Criterion "${id}" quote is derived from reproduction steps/setup commands; demoted to AI-PROPOSED.`);
+        warnings.push(`Claim Gate: Criterion "${id}" quote is derived from current behavior description, reproduction steps, or setup commands; demoted to AI-PROPOSED.`);
       } else if (!quoteInBody) {
         warnings.push(`Claim Gate: Criterion "${id}" verbatim quote not found in issue text; demoted to AI-PROPOSED.`);
       }
