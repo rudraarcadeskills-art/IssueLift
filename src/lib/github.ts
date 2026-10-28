@@ -912,18 +912,29 @@ export function detectPackageManagerFromTree(
   return 'unknown';
 }
 
+const FILE_EXTENSIONS = new Set([
+  'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'json', 'yaml', 'yml', 'md', 'css', 'scss', 'html', 'lock', 'map', 'txt', 'toml'
+]);
+
 const STOP_WORDS = new Set([
   'the', 'and', 'for', 'this', 'that', 'with', 'from', 'have', 'has', 'had',
-  'renders', 'render', 'rendering', 'empty', 'issue', 'when', 'does', 'will',
+  'empty', 'issue', 'when', 'does', 'will', 'not',
   'should', 'error', 'failed', 'what', 'about', 'there', 'only', 'into', 'also',
   'some', 'more', 'page', 'body', 'test', 'tests', 'code', 'file', 'files',
   'using', 'after', 'before', 'where', 'which', 'their', 'could', 'would', 'here'
 ]);
 
+export function isTestOrFixturePath(filePath: string): boolean {
+  if (!filePath || typeof filePath !== 'string') return false;
+  const lower = filePath.toLowerCase().replace(/\\/g, '/');
+  return /(?:^|\/)(?:tests?|__tests__|e2e|specs?|fixtures?|__fixtures__|mocks?|__mocks__|testdata|snapshots?|__snapshots__|samples?)\//i.test(lower);
+}
+
 export interface RankedPathsResult {
   sourceCandidates: string[];
   testCandidates: string[];
   manifestFiles: string[];
+  fixtureCandidates: string[];
   allRanked: string[];
 }
 
@@ -945,9 +956,11 @@ export function rankRepositoryPaths(
   for (const m of backtickMatches) {
     const raw = m.slice(1, -1).trim();
     const clean = raw.replace(/[()]/g, '').toLowerCase();
-    if (clean.length >= 3 && !STOP_WORDS.has(clean)) {
+    if (clean.length >= 3 && !STOP_WORDS.has(clean) && !FILE_EXTENSIONS.has(clean)) {
       highValueTokens.add(clean);
-      const splitTerms = clean.split(/[^a-z0-9_-]+/).filter((t) => t.length >= 3 && !STOP_WORDS.has(t));
+      const splitTerms = clean
+        .split(/[^a-z0-9_-]+/)
+        .filter((t) => t.length >= 3 && !STOP_WORDS.has(t) && !FILE_EXTENSIONS.has(t));
       splitTerms.forEach((t) => highValueTokens.add(t));
     }
   }
@@ -955,28 +968,66 @@ export function rankRepositoryPaths(
   // 2. Path-like strings e.g. packages/next/src/...
   const pathMatches = combinedText.match(/(?:[a-zA-Z0-9_-]+\/)+[a-zA-Z0-9_.-]+/g) || [];
   for (const p of pathMatches) {
-    const base = p.split('/').pop()?.toLowerCase();
-    if (base && base.length >= 3) {
+    const rawBase = p.split('/').pop()?.toLowerCase() || '';
+    const base = rawBase.replace(/\.[a-z0-9]+$/i, '');
+    if (base && base.length >= 3 && !STOP_WORDS.has(base) && !FILE_EXTENSIONS.has(base)) {
       highValueTokens.add(base);
     }
   }
 
-  // 3. General tokens
+  // 3. Hyphenated technical identifiers (e.g. app-render, not-found, server-render)
+  const hyphenMatches = combinedText.match(/\b[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)+\b/g) || [];
+  for (const h of hyphenMatches) {
+    const clean = h.toLowerCase().trim();
+    if (clean.length >= 4 && !STOP_WORDS.has(clean) && !FILE_EXTENSIONS.has(clean)) {
+      highValueTokens.add(clean);
+      clean.split('-').forEach((part) => {
+        if (part.length >= 3 && !STOP_WORDS.has(part) && !FILE_EXTENSIONS.has(part)) {
+          highValueTokens.add(part);
+        }
+      });
+    }
+  }
+
+  // 4. CamelCase technical identifiers (e.g. getErrorRSCPayload, notFound, cacheComponents)
+  const camelMatches = combinedText.match(/\b[a-zA-Z]+[a-z0-9]+(?:[A-Z][a-zA-Z0-9]+)+\b/g) || [];
+  for (const c of camelMatches) {
+    const clean = c.toLowerCase().trim();
+    if (clean.length >= 4 && !STOP_WORDS.has(clean) && !FILE_EXTENSIONS.has(clean)) {
+      highValueTokens.add(clean);
+    }
+  }
+
+  // 5. Explicit area phrases (e.g. "in app-render", "under server/")
+  const areaTokens = new Set<string>();
+  const areaMatches = combinedText.match(/(?:in|under|module|area|package)\s+([a-zA-Z0-9_/-]+)/gi) || [];
+  for (const a of areaMatches) {
+    const term = a.replace(/^(?:in|under|module|area|package)\s+/i, '').toLowerCase().trim();
+    if (term.length >= 3 && !STOP_WORDS.has(term) && !FILE_EXTENSIONS.has(term)) {
+      highValueTokens.add(term);
+      areaTokens.add(term);
+    }
+  }
+
+  // 6. General tokens
   const words = combinedText
     .toLowerCase()
     .split(/[^a-z0-9_-]+/)
-    .filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
+    .filter((w) => w.length >= 3 && !STOP_WORDS.has(w) && !FILE_EXTENSIONS.has(w));
 
   for (const w of words) {
     generalTokens.add(w);
     // Split kebab/snake
     if (w.includes('-') || w.includes('_')) {
-      w.split(/[-_]+/).filter((sub) => sub.length >= 3 && !STOP_WORDS.has(sub)).forEach((sub) => generalTokens.add(sub));
+      w.split(/[-_]+/)
+        .filter((sub) => sub.length >= 3 && !STOP_WORDS.has(sub) && !FILE_EXTENSIONS.has(sub))
+        .forEach((sub) => generalTokens.add(sub));
     }
   }
 
   const scoredSources: Array<{ path: string; score: number }> = [];
   const scoredTests: Array<{ path: string; score: number }> = [];
+  const scoredFixtures: Array<{ path: string; score: number }> = [];
   const manifestFiles: string[] = [];
 
   const manifestNames = new Set([
@@ -1011,37 +1062,80 @@ export function rankRepositoryPaths(
 
     let score = 0;
     const isTest = isLikelyTestFile(file);
+    const isFixtureOrTestContext = isTestOrFixturePath(file);
+    const basenameNoExt = basename.replace(/\.[^.]+$/, '');
 
     // Score high-value tokens
     for (const token of highValueTokens) {
-      if (basename.includes(token)) {
+      let matched = false;
+      if (basenameNoExt === token) {
+        score += 45; // Exact file name match
+        matched = true;
+      } else if (basename.includes(token)) {
         score += 25;
-      } else if (lower.includes(token)) {
+        matched = true;
+      }
+
+      if (lower.includes('/' + token + '/')) {
+        score += 35; // Directory segment match (e.g. /app-render/)
+        matched = true;
+      } else if (!matched && lower.includes(token)) {
         score += 10;
+      }
+    }
+
+    // Specific boost for matching explicitly cited area/module
+    for (const area of areaTokens) {
+      if (lower.includes('/' + area + '/') || basenameNoExt === area) {
+        score += 50;
       }
     }
 
     // Score general tokens
     for (const token of generalTokens) {
-      if (basename.includes(token)) {
-        score += 8;
+      if (basenameNoExt === token) {
+        score += 12;
+      } else if (basename.includes(token)) {
+        score += 6;
+      } else if (lower.includes('/' + token + '/')) {
+        score += 5;
       } else if (lower.includes(token)) {
-        score += 3;
+        score += 2;
       }
     }
 
-    // Structural bonuses
+    // Structural classification
     if (isTest) {
       if (score > 0) score += 10;
       scoredTests.push({ path: file, score });
+    } else if (isFixtureOrTestContext) {
+      // Clearly classified as fixture / context files, NOT primary implementation source
+      scoredFixtures.push({ path: file, score });
     } else {
-      // Bonus for files in standard implementation paths
+      // Genuine production implementation file
       if (lower.startsWith('packages/') || lower.startsWith('src/') || lower.startsWith('lib/') || lower.startsWith('app/')) {
-        score += 4;
+        score += 15;
       }
-      // Prioritize primary code extensions
+
+      const lowerCombined = combinedText.toLowerCase();
+      const isServerContext =
+        lowerCombined.includes('server') ||
+        lowerCombined.includes('ssr') ||
+        lowerCombined.includes('server-render') ||
+        lowerCombined.includes('next start');
+
+      if (isServerContext) {
+        if (lower.includes('/src/server/') || lower.includes('/server/')) {
+          score += 35;
+        } else if (lower.includes('/src/client/') || lower.includes('/client/')) {
+          score -= 20;
+        }
+      } else if (lower.includes('/src/server/') || lower.includes('/src/core/')) {
+        score += 10;
+      }
+
       if (/\.(?:ts|tsx|js|jsx|mjs|cjs|rs|go|py|java|c|cpp)$/i.test(lower)) {
-        score += 2;
+        score += 4;
       }
       scoredSources.push({ path: file, score });
     }
@@ -1049,26 +1143,36 @@ export function rankRepositoryPaths(
 
   scoredSources.sort((a, b) => b.score - a.score);
   scoredTests.sort((a, b) => b.score - a.score);
+  scoredFixtures.sort((a, b) => b.score - a.score);
 
   // Filter to positive scores or fallback to top candidates
   const sourceCandidates = scoredSources.filter((s) => s.score > 0).map((s) => s.path);
   const testCandidates = scoredTests.filter((t) => t.score > 0).map((t) => t.path);
+  const fixtureCandidates = scoredFixtures.filter((f) => f.score > 0).map((f) => f.path);
 
-  // Fallbacks if no score match
+  // Fallbacks: If no production sources have positive score, fallback to scoredSources.
+  // If scoredSources is completely empty, use fixtureCandidates as last resort.
   const fallbackSources = sourceCandidates.length > 0
     ? sourceCandidates
-    : scoredSources.slice(0, 15).map((s) => s.path);
+    : scoredSources.length > 0
+    ? scoredSources.slice(0, 15).map((s) => s.path)
+    : fixtureCandidates.slice(0, 15);
 
   const fallbackTests = testCandidates.length > 0
     ? testCandidates
     : scoredTests.slice(0, 10).map((t) => t.path);
 
-  const allRanked = Array.from(new Set([...fallbackSources, ...fallbackTests]));
+  const fallbackFixtures = fixtureCandidates.length > 0
+    ? fixtureCandidates
+    : scoredFixtures.slice(0, 10).map((f) => f.path);
+
+  const allRanked = Array.from(new Set([...fallbackSources, ...fallbackTests, ...fallbackFixtures]));
 
   return {
     sourceCandidates: fallbackSources,
     testCandidates: fallbackTests,
     manifestFiles,
+    fixtureCandidates: fallbackFixtures,
     allRanked,
   };
 }

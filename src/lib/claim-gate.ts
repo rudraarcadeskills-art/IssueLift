@@ -11,6 +11,7 @@ import {
   SourceEvidence,
   TestEvidenceStatus,
 } from './types';
+import { deriveTestEvidenceSummary } from './test-evidence';
 
 export interface ClaimGateValidationResult {
   validatedCriteria: AcceptanceCriterion[];
@@ -156,12 +157,9 @@ export function runDeterministicClaimGate(
     });
 
     // Validate Test Evidence
-    let testStatus: TestEvidenceStatus = 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
     const validatedTestFiles: CandidateTestFile[] = [];
 
-    if (scanBoundaries.is_tree_truncated) {
-      testStatus = 'SCAN INCOMPLETE / UNKNOWN';
-    } else {
+    if (!scanBoundaries.is_tree_truncated) {
       for (const tFile of criterion.test_evidence?.candidate_test_files || []) {
         if (!fileSet.has(tFile.path)) {
           rejectedPathsCount++;
@@ -181,51 +179,20 @@ export function runDeterministicClaimGate(
           test_executed: false,
         });
       }
-
-      const confirmedRelevantTests = validatedTestFiles.filter(
-        (f) => f.assertions_inspected && f.is_automated_test && f.relevance_verdict === 'CONFIRMED_RELEVANT'
-      );
-      const potentialTests = validatedTestFiles.filter(
-        (f) => f.is_automated_test && f.relevance_verdict !== 'UNRELATED'
-      );
-
-      if (confirmedRelevantTests.length > 0) {
-        testStatus = 'TEST EVIDENCE FOUND';
-      } else if (potentialTests.length > 0) {
-        testStatus = 'POSSIBLE TEST CANDIDATE';
-      } else {
-        testStatus = 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
-      }
     }
 
-    const hasInspectedRelevant = validatedTestFiles.some(
-      (f) => f.assertions_inspected && f.is_automated_test && f.relevance_verdict === 'CONFIRMED_RELEVANT'
-    );
-
-    // Never claim tests passed or executed without actual execution
-    const rationale = testStatus === 'TEST EVIDENCE FOUND'
-      ? `Located relevant automated test file(s) in repository tree (${validatedTestFiles.filter((f) => f.relevance_verdict === 'CONFIRMED_RELEVANT').map((f) => f.path).join(', ')}). Test assertions inspected in bounded scan and verified relevant to acceptance criterion. Test was inspected but NOT executed (security guardrail; untrusted code is never run).`
-      : testStatus === 'POSSIBLE TEST CANDIDATE'
-      ? `Candidate test path(s) found in repository tree (${validatedTestFiles.map((f) => f.path).join(', ')}). Assertions not inspected or relevance unconfirmed; test NOT executed.`
-      : testStatus === 'SCAN INCOMPLETE / UNKNOWN'
-      ? 'Repository tree was truncated by GitHub API limit; test evidence scan is incomplete.'
-      : 'No relevant automated test evidence confirmed in scanned files. Candidate files were either fixture/sample components, lacked automated assertions, or were unrelated to this criterion.';
+    const testEvidence = deriveTestEvidenceSummary(validatedTestFiles, {
+      isTreeTruncated: scanBoundaries.is_tree_truncated,
+      criterionDescription: criterion.description,
+      proposedManualValidation: criterion.test_evidence?.proposed_manual_validation,
+    });
 
     return {
       ...criterion,
       id,
       criterion_type,
       candidate_implementation_files: validatedImplFiles,
-      test_evidence: {
-        status: testStatus,
-        candidate_test_files: validatedTestFiles,
-        rationale,
-        proposed_manual_validation:
-          criterion.test_evidence?.proposed_manual_validation ||
-          'Verify locally by reproducing issue steps before and after changes.',
-        assertions_inspected: hasInspectedRelevant,
-        test_executed: false,
-      },
+      test_evidence: testEvidence,
     };
   });
 

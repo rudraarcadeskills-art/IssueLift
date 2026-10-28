@@ -7,14 +7,18 @@ import {
 import { runDeterministicClaimGate } from '../src/lib/claim-gate';
 import {
   isLikelyTestFile,
+  isTestOrFixturePath,
   inspectTestContent,
   evaluateTestRelevance,
   extractReproductionEnvironment,
+  rankRepositoryPaths,
 } from '../src/lib/github';
+import { deriveTestEvidenceSummary, formatCandidateTestFileSummary } from '../src/lib/test-evidence';
 import { generateProofBundleMarkdown, generateProofBundleJson } from '../src/lib/proof-bundle';
 import { ISSUELIFT_REPO_URL } from '../src/lib/config';
 import {
   AcceptanceCriterion,
+  CandidateTestFile,
   GitHubIssueMetadata,
   ScanBoundaries,
   SetupTruth,
@@ -83,6 +87,63 @@ _No response_
 ### Additional information
 
 _No response_`;
+
+const ACTUAL_NEXTJS_100596_BODY = `### Link to the code that reproduces this issue
+
+https://github.com/molovo/next-notfound-empty-body
+
+### To Reproduce
+
+1. Clone the repo, then run \`npm install && npm run build && npm run start\`.
+2. Run \`curl -s http://localhost:3000/nope\`. \`app/[slug]/page.tsx\` calls \`notFound()\` for any slug other than \`known\`, the one \`generateStaticParams\` returns.
+3. For comparison, run \`curl -s http://localhost:3000/this/does/not/exist\`, which matches no route.
+
+The repro is \`create-next-app@16.3.8\` (first commit) plus \`app/[slug]/page.tsx\` and \`app/not-found.tsx\` (second commit).
+
+### Current vs. Expected behavior
+
+**Current:** \`/nope\` responds \`404\` with:
+
+\`\`\`html
+<html id="__next_error__"><head>…</head><body><div hidden=""><!--$--><!--/$--></div><script>…</script></body></html>
+\`\`\`
+
+The root layout and \`app/not-found.tsx\` (\`<h1>Custom not-found copy</h1>\`) appear only inside the inline RSC payload, so they render only after hydration. With JavaScript disabled, the page is blank.
+
+\`/this/does/not/exist\` responds \`404\` with the root layout's \`<html lang="en" …>\` and \`<h1>Custom not-found copy</h1>\` in \`<body>\`, as expected.
+
+**Expected:** a \`notFound()\` thrown while rendering a dynamic segment should server-render the not-found boundary inside the layout, the same as an unmatched route, so the 404 copy is in the initial HTML for no-JS visitors and crawlers.
+
+The same happens with \`cacheComponents: true\`, and with the root layout under a dynamic \`[lang]\` segment, which is where we first saw it on a production site. It reproduces on \`16.3.8\` and on \`16.5.0-canary.23\`.
+
+### Provide environment information
+
+\`\`\`bash
+Operating System:
+  Platform: darwin
+  Arch: arm64
+  Version: Darwin Kernel Version 25.6.0
+Binaries:
+  Node: 20.20.2
+  npm: 10.8.2
+Relevant Packages:
+  next: 16.3.8 (also 16.5.0-canary.23)
+  react: 19.2.8
+  react-dom: 19.2.8
+  typescript: 5.9.3
+\`\`\`
+
+### Which area(s) are affected? (Select all that apply)
+
+Error Handling, Not Found
+
+### Which stage(s) are affected? (Select all that apply)
+
+next build (local), next start (local)
+
+### Additional context
+
+The response looks like Next's error-recovery shell (<html id="__next_error__">, as produced by getErrorRSCPayload in app-render). That suggests the notFound() thrown during SSR isn't caught by the HTTP access fallback boundary in the shell, so the whole shell falls back to the error document. Only the RSC payload gets the not-found tree.`;
 
 const mockMetadata: GitHubIssueMetadata = {
   url: 'https://github.com/vercel/next.js/issues/100596',
@@ -223,63 +284,6 @@ describe('BUG 1 — Acceptance Criteria are not Reproduction Steps', () => {
 });
 
 describe('BUG 1B — Actual Next.js Issue #100596 Structure with Inline Expected: Label', () => {
-  const ACTUAL_NEXTJS_100596_BODY = `### Link to the code that reproduces this issue
-
-https://github.com/molovo/next-notfound-empty-body
-
-### To Reproduce
-
-1. Clone the repo, then run \`npm install && npm run build && npm run start\`.
-2. Run \`curl -s http://localhost:3000/nope\`. \`app/[slug]/page.tsx\` calls \`notFound()\` for any slug other than \`known\`, the one \`generateStaticParams\` returns.
-3. For comparison, run \`curl -s http://localhost:3000/this/does/not/exist\`, which matches no route.
-
-The repro is \`create-next-app@16.3.8\` (first commit) plus \`app/[slug]/page.tsx\` and \`app/not-found.tsx\` (second commit).
-
-### Current vs. Expected behavior
-
-**Current:** \`/nope\` responds \`404\` with:
-
-\`\`\`html
-<html id="__next_error__"><head>…</head><body><div hidden=""><!--$--><!--/$--></div><script>…</script></body></html>
-\`\`\`
-
-The root layout and \`app/not-found.tsx\` (\`<h1>Custom not-found copy</h1>\`) appear only inside the inline RSC payload, so they render only after hydration. With JavaScript disabled, the page is blank.
-
-\`/this/does/not/exist\` responds \`404\` with the root layout's \`<html lang="en" …>\` and \`<h1>Custom not-found copy</h1>\` in \`<body>\`, as expected.
-
-**Expected:** a \`notFound()\` thrown while rendering a dynamic segment should server-render the not-found boundary inside the layout, the same as an unmatched route, so the 404 copy is in the initial HTML for no-JS visitors and crawlers.
-
-The same happens with \`cacheComponents: true\`, and with the root layout under a dynamic \`[lang]\` segment, which is where we first saw it on a production site. It reproduces on \`16.3.8\` and on \`16.5.0-canary.23\`.
-
-### Provide environment information
-
-\`\`\`bash
-Operating System:
-  Platform: darwin
-  Arch: arm64
-  Version: Darwin Kernel Version 25.6.0
-Binaries:
-  Node: 20.20.2
-  npm: 10.8.2
-Relevant Packages:
-  next: 16.3.8 (also 16.5.0-canary.23)
-  react: 19.2.8
-  react-dom: 19.2.8
-  typescript: 5.9.3
-\`\`\`
-
-### Which area(s) are affected? (Select all that apply)
-
-Error Handling, Not Found
-
-### Which stage(s) are affected? (Select all that apply)
-
-next build (local), next start (local)
-
-### Additional context
-
-The response looks like Next's error-recovery shell (<html id="__next_error__">, as produced by getErrorRSCPayload in app-render). That suggests the notFound() thrown during SSR isn't caught by the HTTP access fallback boundary in the shell, so the whole shell falls back to the error document. Only the RSC payload gets the not-found tree.`;
-
   it('correctly recognizes inline **Expected:** label and extracts expected-behaviour text from real issue #100596', () => {
     const criteria = extractExplicitCriteria(ACTUAL_NEXTJS_100596_BODY, mockMetadata.url, mockSetupTruth.test_command);
 
@@ -748,4 +752,248 @@ describe('BUG 5 — Repository URL and Duplicate Numbering', () => {
     expect(parsed.issuelift_project_url).not.toContain('issuelift/issuelift');
   });
 });
+
+describe('BUG 6 — Test Evidence Normalization & Serialization Consistency', () => {
+  it('correctly aggregates mixed relevant and unrelated candidates without contradiction', () => {
+    const candidates: CandidateTestFile[] = [
+      {
+        path: 'test/e2e/app-dir/not-found/not-found.test.ts',
+        source_id: 'repo-tree',
+        verified_exists: true,
+        assertions_inspected: true,
+        is_automated_test: true,
+        relevance_verdict: 'CONFIRMED_RELEVANT',
+        test_executed: false,
+      },
+      {
+        path: 'test/e2e/app-dir/css-chunks/css-chunks.test.ts',
+        source_id: 'repo-tree',
+        verified_exists: true,
+        assertions_inspected: true,
+        is_automated_test: true,
+        relevance_verdict: 'UNRELATED',
+        test_executed: false,
+      },
+    ];
+
+    const summary = deriveTestEvidenceSummary(candidates, {
+      isTreeTruncated: false,
+      criterionDescription: 'notFound() in dynamic segment renders not-found copy inside layout',
+    });
+
+    expect(summary.status).toBe('TEST EVIDENCE FOUND');
+    expect(summary.assertions_inspected).toBe(true);
+    expect(summary.test_executed).toBe(false);
+    expect(summary.rationale).toContain('Located relevant automated test file(s)');
+    expect(summary.rationale).toContain('not-found.test.ts');
+    expect(summary.rationale).toContain('css-chunks.test.ts');
+    expect(summary.rationale).toContain('unrelated');
+    expect(summary.rationale).not.toContain('Assertions not inspected');
+    expect(summary.rationale).toContain('NOT executed (security guardrail');
+  });
+
+  it('correctly reports all-unrelated candidates as inspected without claiming assertions were not inspected', () => {
+    const candidates: CandidateTestFile[] = [
+      {
+        path: 'test/e2e/app-dir/css-chunks/css-chunks.test.ts',
+        source_id: 'repo-tree',
+        verified_exists: true,
+        assertions_inspected: true,
+        is_automated_test: true,
+        relevance_verdict: 'UNRELATED',
+        test_executed: false,
+      },
+    ];
+
+    const summary = deriveTestEvidenceSummary(candidates, {
+      isTreeTruncated: false,
+      criterionDescription: 'notFound() in dynamic segment renders not-found copy inside layout',
+    });
+
+    expect(summary.status).toBe('NO TEST EVIDENCE FOUND IN SCANNED FILES');
+    // Individual child had assertions inspected, so aggregate assertions_inspected MUST be true
+    expect(summary.assertions_inspected).toBe(true);
+    expect(summary.test_executed).toBe(false);
+    expect(summary.rationale).toContain('do not verify criterion requirements');
+    expect(summary.rationale).toContain('Test assertions were inspected');
+    expect(summary.rationale).not.toContain('Assertions not inspected');
+    expect(summary.rationale).toContain('tests were NOT executed');
+  });
+
+  it('honestly reports unavailable content or uninspected candidates', () => {
+    const candidates: CandidateTestFile[] = [
+      {
+        path: 'test/e2e/app-dir/not-found/uninspected.test.ts',
+        source_id: 'repo-tree',
+        verified_exists: true,
+        assertions_inspected: false,
+        is_automated_test: true,
+        relevance_verdict: 'POTENTIALLY_RELEVANT',
+        test_executed: false,
+      },
+    ];
+
+    const summary = deriveTestEvidenceSummary(candidates, {
+      isTreeTruncated: false,
+      criterionDescription: 'notFound() in dynamic segment renders not-found copy inside layout',
+    });
+
+    expect(summary.status).toBe('POSSIBLE TEST CANDIDATE');
+    expect(summary.assertions_inspected).toBe(false);
+    expect(summary.test_executed).toBe(false);
+    expect(summary.rationale).toContain('File content was unavailable or assertions were not inspected');
+    expect(summary.rationale).toContain('test execution has NOT occurred');
+  });
+
+  it('guarantees test_executed is strictly false and third-party tests are never executed', () => {
+    const candidates: CandidateTestFile[] = [
+      {
+        path: 'test/e2e/app-dir/not-found/not-found.test.ts',
+        source_id: 'repo-tree',
+        verified_exists: true,
+        assertions_inspected: true,
+        is_automated_test: true,
+        relevance_verdict: 'CONFIRMED_RELEVANT',
+        test_executed: true as any, // hostile input attempting to claim execution
+      },
+    ];
+
+    const summary = deriveTestEvidenceSummary(candidates, { isTreeTruncated: false });
+
+    // Invariant: test_executed is reset to false on both child and aggregate
+    expect(summary.test_executed).toBe(false);
+    expect(summary.candidate_test_files[0].test_executed).toBe(false);
+  });
+
+  it('ensures consistent UI, Markdown, and JSON evidence summaries without contradiction', () => {
+    const candidate: CandidateTestFile = {
+      path: 'test/e2e/app-dir/not-found/not-found.test.ts',
+      source_id: 'repo-tree',
+      verified_exists: true,
+      assertions_inspected: true,
+      is_automated_test: true,
+      relevance_verdict: 'CONFIRMED_RELEVANT',
+      test_executed: false,
+    };
+
+    const evidenceSummary = deriveTestEvidenceSummary([candidate], {
+      isTreeTruncated: false,
+      criterionDescription: 'Sample requirement',
+    });
+
+    const mockCriterion: AcceptanceCriterion = {
+      id: 'AC-01',
+      description: 'Sample requirement',
+      criterion_type: 'EXPLICIT',
+      status: 'ACTIONABLE',
+      status_rationale: 'Verified',
+      needs_maintainer_clarification: false,
+      candidate_implementation_files: [],
+      test_evidence: evidenceSummary,
+    };
+
+    const contract = compileDeterministicBaselineContract(
+      mockMetadata,
+      mockSources,
+      ['package.json', candidate.path],
+      mockSetupTruth,
+      mockScanBoundaries
+    );
+    contract.criteria = [mockCriterion];
+
+    const md = generateProofBundleMarkdown(contract);
+    const jsonStr = generateProofBundleJson(contract);
+    const parsed = JSON.parse(jsonStr);
+
+    // Formatted candidate summary matches Markdown
+    const formatted = formatCandidateTestFileSummary(candidate);
+    expect(md).toContain(formatted.fullSummary);
+    expect(md).toContain('[Verified Relevant Automated Test]');
+    expect(md).toContain('Inspected: Yes');
+    expect(md).toContain('Executed: No');
+
+    // JSON export agrees exactly with Markdown and child candidate record
+    expect(parsed.criteria[0].test_evidence.status).toBe('TEST EVIDENCE FOUND');
+    expect(parsed.criteria[0].test_evidence.assertions_inspected).toBe(true);
+    expect(parsed.criteria[0].test_evidence.test_executed).toBe(false);
+    expect(parsed.criteria[0].test_evidence.candidate_test_files[0].assertions_inspected).toBe(true);
+    expect(parsed.criteria[0].test_evidence.candidate_test_files[0].test_executed).toBe(false);
+  });
+});
+
+describe('BUG 7 — Implementation File Ranking & Fixture Separation', () => {
+  it('correctly classifies fixture application components as fixtures, not primary implementation sources', () => {
+    const fixture1 = 'test/e2e/app-dir/fixtures/dynamic-not-found/not-found.tsx';
+    const fixture2 = 'test/development/app-dir/segment-explorer-globals/app/global-not-found.tsx';
+    const prodFile1 = 'packages/next/src/server/app-render/app-render.tsx';
+    const prodFile2 = 'packages/next/src/client/components/not-found.tsx';
+
+    expect(isTestOrFixturePath(fixture1)).toBe(true);
+    expect(isTestOrFixturePath(fixture2)).toBe(true);
+    expect(isTestOrFixturePath(prodFile1)).toBe(false);
+    expect(isTestOrFixturePath(prodFile2)).toBe(false);
+  });
+
+  it('ranks genuine production implementation files in app-render above fixture application files for issue #100596', () => {
+    const fileList = [
+      'test/e2e/app-dir/fixtures/dynamic-not-found/not-found.tsx',
+      'test/development/app-dir/segment-explorer-globals/app/global-not-found.tsx',
+      'packages/next/src/server/app-render/app-render.tsx',
+      'packages/next/src/client/components/not-found.tsx',
+      'test/e2e/app-dir/not-found/index.test.ts',
+      'package.json',
+    ];
+
+    const ranked = rankRepositoryPaths(
+      fileList,
+      mockMetadata.title,
+      ACTUAL_NEXTJS_100596_BODY,
+      ['area: app', 'template: bug']
+    );
+
+    // Primary production implementation file ranked #1 in sourceCandidates
+    expect(ranked.sourceCandidates.length).toBeGreaterThan(0);
+    expect(ranked.sourceCandidates[0]).toBe('packages/next/src/server/app-render/app-render.tsx');
+
+    // Fixture files are separated into fixtureCandidates and not in top sourceCandidates
+    expect(ranked.fixtureCandidates).toContain('test/e2e/app-dir/fixtures/dynamic-not-found/not-found.tsx');
+    expect(ranked.sourceCandidates.includes('test/e2e/app-dir/fixtures/dynamic-not-found/not-found.tsx')).toBe(false);
+
+    // Test file is in testCandidates
+    expect(ranked.testCandidates).toContain('test/e2e/app-dir/not-found/index.test.ts');
+  });
+
+  it('maintains strict separation between the five evidence states and reports limitations honestly', () => {
+    const fileList = [
+      'packages/next/src/server/app-render/app-render.tsx',
+      'test/e2e/app-dir/not-found/not-found.test.ts',
+      'package.json',
+    ];
+
+    const contract = compileDeterministicBaselineContract(
+      mockMetadata,
+      mockSources,
+      fileList,
+      mockSetupTruth,
+      mockScanBoundaries
+    );
+
+    expect(contract.criteria.length).toBeGreaterThan(0);
+    const criterion = contract.criteria[0];
+
+    // State 1: path exists in tree
+    expect(criterion.candidate_implementation_files[0].path).toBe('packages/next/src/server/app-render/app-render.tsx');
+    expect(criterion.candidate_implementation_files[0].verified_exists).toBe(true);
+
+    // State 2 & 3: relevance inferred from content/tree, not claimed as maintainer-verified
+    expect(criterion.candidate_implementation_files[0].relevance_status).toBe('AI-INFERRED');
+
+    // State 4: test assertions inspected
+    expect(criterion.test_evidence.assertions_inspected).toBe(false); // content was uninspected in this tree
+
+    // State 5: test actually executed (must ALWAYS be false)
+    expect(criterion.test_evidence.test_executed).toBe(false);
+  });
+});
+
 

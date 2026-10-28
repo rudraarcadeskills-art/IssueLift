@@ -1,5 +1,6 @@
 import { ContributionContract } from './types';
 import { ISSUELIFT_REPO_URL, ISSUELIFT_CANONICAL_URL } from './config';
+import { formatCandidateTestFileSummary } from './test-evidence';
 
 export function generateProofBundleMarkdown(contract: ContributionContract): string {
   const meta = contract.issue_metadata;
@@ -14,16 +15,7 @@ export function generateProofBundleMarkdown(contract: ContributionContract): str
       
       const testFilesStr = c.test_evidence.candidate_test_files.length > 0
         ? c.test_evidence.candidate_test_files
-            .map((t) => {
-              const suiteBadge = t.is_automated_test === false
-                ? '[Fixture/Sample Component - Not a Test Suite]'
-                : t.relevance_verdict === 'CONFIRMED_RELEVANT'
-                ? '[Verified Relevant Automated Test]'
-                : t.relevance_verdict === 'UNRELATED'
-                ? '[Unrelated Test Suite]'
-                : '[Automated Test Candidate]';
-              return `\`${t.path}\` ${suiteBadge} (Inspected: ${t.assertions_inspected ? 'Yes' : 'No'}, Executed: No - third-party code is never executed)`;
-            })
+            .map((t) => formatCandidateTestFileSummary(t).fullSummary)
             .join('\n    - ')
         : '_No test evidence found in scanned files_';
 

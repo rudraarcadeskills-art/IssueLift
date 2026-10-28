@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { AcceptanceCriterion, CommandInfo } from '@/lib/types';
+import { formatCandidateTestFileSummary } from '@/lib/test-evidence';
 import {
   Network,
   FileCode,
@@ -168,42 +169,41 @@ export function TraceMapRadar({
                       </div>
                       {c.test_evidence.candidate_test_files.length > 0 ? (
                         <div className="space-y-1.5">
-                          {c.test_evidence.candidate_test_files.map((tFile, i) => (
-                            <div key={i} className="text-xs">
-                              <a
-                                href={`https://github.com/${owner}/${repo}/blob/${defaultBranch}/${tFile.path}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="font-mono text-teal-600 dark:text-teal-300 hover:text-teal-800 dark:hover:text-teal-200 hover:underline flex items-center gap-1 text-[11px]"
-                              >
-                                <span className="truncate">{tFile.path}</span>
-                                <ExternalLink className="w-3 h-3 shrink-0" />
-                              </a>
-                              <span className="text-[10px] block mt-0.5">
-                                {tFile.is_automated_test === false ? (
-                                  <span className="text-amber-700 dark:text-amber-400 font-medium">
-                                    ⚠️ Fixture/Sample component (Not automated test)
-                                  </span>
-                                ) : tFile.relevance_verdict === 'CONFIRMED_RELEVANT' ? (
-                                  <span className="text-teal-700 dark:text-teal-300 font-medium">
-                                    ✓ Verified Relevant Automated Test (inspected, not executed)
-                                  </span>
-                                ) : tFile.relevance_verdict === 'UNRELATED' ? (
-                                  <span className="text-slate-600 dark:text-slate-400">
-                                    ⚠️ Unrelated test suite (inspected, does not cover criterion)
-                                  </span>
-                                ) : tFile.assertions_inspected ? (
-                                  <span className="text-teal-700 dark:text-teal-300 font-medium">
-                                    ✓ Automated test assertions inspected (not executed)
-                                  </span>
-                                ) : (
-                                  <span className="text-slate-600 dark:text-slate-400">
-                                    ✓ Candidate path found in tree (not executed)
-                                  </span>
-                                )}
-                              </span>
-                            </div>
-                          ))}
+                          {c.test_evidence.candidate_test_files.map((tFile, i) => {
+                            const summary = formatCandidateTestFileSummary(tFile);
+                            return (
+                              <div key={i} className="text-xs">
+                                <a
+                                  href={`https://github.com/${owner}/${repo}/blob/${defaultBranch}/${tFile.path}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="font-mono text-teal-600 dark:text-teal-300 hover:text-teal-800 dark:hover:text-teal-200 hover:underline flex items-center gap-1 text-[11px]"
+                                >
+                                  <span className="truncate">{tFile.path}</span>
+                                  <ExternalLink className="w-3 h-3 shrink-0" />
+                                </a>
+                                <span className="text-[10px] block mt-0.5">
+                                  {summary.badgeType === 'fixture' ? (
+                                    <span className="text-amber-700 dark:text-amber-400 font-medium">
+                                      ⚠️ {summary.badge}
+                                    </span>
+                                  ) : summary.badgeType === 'verified' ? (
+                                    <span className="text-teal-700 dark:text-teal-300 font-medium">
+                                      ✓ {summary.badge} ({summary.inspectionText}, not executed)
+                                    </span>
+                                  ) : summary.badgeType === 'unrelated' ? (
+                                    <span className="text-slate-600 dark:text-slate-400">
+                                      ⚠️ {summary.badge} ({summary.inspectionText}, does not cover criterion)
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-600 dark:text-slate-400">
+                                      ✓ {summary.badge} ({summary.inspectionText}, not executed)
+                                    </span>
+                                  )}
+                                </span>
+                              </div>
+                            );
+                          })}
                           <div className="pt-1 text-[10px] text-slate-500 dark:text-slate-400 border-t border-slate-200 dark:border-midnight-700/60 flex items-center justify-between">
                             <span>Execution status:</span>
                             <span className="font-mono text-amber-700 dark:text-amber-300 font-semibold">

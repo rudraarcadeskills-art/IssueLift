@@ -16,8 +16,10 @@ import {
   evaluateTestRelevance,
   extractReproductionEnvironment,
   isLikelyTestFile,
+  isTestOrFixturePath,
   rankRepositoryPaths,
 } from './github';
+import { deriveTestEvidenceSummary } from './test-evidence';
 import { isGemmaConfigured } from './config';
 
 export function extractExplicitCriteria(
@@ -410,7 +412,11 @@ export async function compileContributionContract(
         relevance_status: 'AI-INFERRED',
       }));
 
-      if (candidateImplFiles.length === 0 && ranked.sourceCandidates.length > 0) {
+      // Keep only production source files among candidate files (fixtures belong in context/fixtures, not implementation sources)
+      const nonFixtureImplFiles = candidateImplFiles.filter((f) => !isTestOrFixturePath(f.path));
+      if (nonFixtureImplFiles.length > 0) {
+        candidateImplFiles = nonFixtureImplFiles;
+      } else if (ranked.sourceCandidates.length > 0) {
         const critRanked = rankRepositoryPaths(
           repositoryFiles,
           c.description,
@@ -423,7 +429,7 @@ export async function compileContributionContract(
 
         candidateImplFiles = topSources.map((p) => ({
           path: p,
-          relevance_rationale: `Candidate source file mapped from repository tree tokens matching criterion`,
+          relevance_rationale: `Candidate production source file mapped from repository tree matching criterion`,
           source_id: 'repo-tree',
           verified_exists: true,
           relevance_status: 'AI-INFERRED',
@@ -477,28 +483,11 @@ export async function compileContributionContract(
         }
       }
 
-      const relevantInspectedTests = candidateTestFiles.filter((t) => t.assertions_inspected && t.relevance_verdict === 'RELEVANT');
-      const unrelatedInspectedTests = candidateTestFiles.filter((t) => t.assertions_inspected && t.relevance_verdict === 'UNRELATED');
-
-      let testEvidenceStatus: TestEvidenceStatus;
-      let defaultRationale: string;
-
-      if (scanBoundaries.is_tree_truncated) {
-        testEvidenceStatus = 'SCAN INCOMPLETE / UNKNOWN';
-        defaultRationale = 'Repository tree was truncated by GitHub API limit; test evidence scan is incomplete.';
-      } else if (relevantInspectedTests.length > 0) {
-        testEvidenceStatus = 'TEST EVIDENCE FOUND';
-        defaultRationale = `Located relevant candidate test file(s) in repository tree (${relevantInspectedTests.map((t) => t.path).join(', ')}). Test assertions inspected in bounded scan. Test execution has not occurred (security guardrail).`;
-      } else if (unrelatedInspectedTests.length > 0 && candidateTestFiles.every((t) => t.relevance_verdict === 'UNRELATED')) {
-        testEvidenceStatus = 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
-        defaultRationale = `Inspected candidate test files in bounded scan (${unrelatedInspectedTests.map((t) => t.path).join(', ')}) do not verify criterion requirements. No relevant automated test evidence confirmed in bounded scan. Candidate tests were not executed (security guardrail).`;
-      } else if (candidateTestFiles.some((t) => !t.assertions_inspected)) {
-        testEvidenceStatus = 'POSSIBLE TEST CANDIDATE';
-        defaultRationale = `Candidate test path(s) found in repository tree (${candidateTestFiles.map((t) => t.path).join(', ')}). Assertions not inspected; test execution has not occurred.`;
-      } else {
-        testEvidenceStatus = 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
-        defaultRationale = 'No test evidence found in scanned files. Test coverage cannot be established from bounded context.';
-      }
+      const testEvidence = deriveTestEvidenceSummary(candidateTestFiles, {
+        isTreeTruncated: scanBoundaries.is_tree_truncated,
+        criterionDescription: c.description,
+        proposedManualValidation: c.test_evidence?.proposed_manual_validation,
+      });
 
       return {
         id,
@@ -510,14 +499,7 @@ export async function compileContributionContract(
         status_rationale: c.status_rationale,
         needs_maintainer_clarification: c.status === 'AMBIGUOUS' || c.status === 'NOT_SPECIFIED',
         candidate_implementation_files: candidateImplFiles,
-        test_evidence: {
-          status: testEvidenceStatus,
-          candidate_test_files: candidateTestFiles,
-          rationale: c.test_evidence?.rationale || defaultRationale,
-          proposed_manual_validation: c.test_evidence?.proposed_manual_validation || `Verify "${c.description}" locally before opening pull request.`,
-          assertions_inspected: candidateTestFiles.some((f) => f.assertions_inspected),
-          test_executed: false,
-        },
+        test_evidence: testEvidence,
         test_command: setupTruth.test_command,
       };
     });
@@ -640,7 +622,9 @@ export function compileDeterministicBaselineContract(
   criteria.forEach((c) => {
     c.candidate_implementation_files = potentialSourceFiles.map((p) => ({
       path: p,
-      relevance_rationale: 'Candidate source file identified in repository tree.',
+      relevance_rationale: isTestOrFixturePath(p)
+        ? 'Fixture/context file in test tree (not primary production source).'
+        : 'Candidate production source file identified in repository tree.',
       source_id: 'repo-tree',
       verified_exists: true,
       relevance_status: 'AI-INFERRED',
@@ -663,37 +647,11 @@ export function compileDeterministicBaselineContract(
         };
       });
 
-      const relevantInspectedTests = candidateTestFiles.filter((t) => t.assertions_inspected && t.relevance_verdict === 'RELEVANT');
-      const unrelatedInspectedTests = candidateTestFiles.filter((t) => t.assertions_inspected && t.relevance_verdict === 'UNRELATED');
-
-      let testStatus: TestEvidenceStatus;
-      let defaultRationale: string;
-
-      if (scanBoundaries.is_tree_truncated) {
-        testStatus = 'SCAN INCOMPLETE / UNKNOWN';
-        defaultRationale = 'Repository tree was truncated by GitHub API limit; test evidence scan is incomplete.';
-      } else if (relevantInspectedTests.length > 0) {
-        testStatus = 'TEST EVIDENCE FOUND';
-        defaultRationale = `Located candidate test file(s) in repository tree (${relevantInspectedTests.map((t) => t.path).join(', ')}). Test assertions inspected in bounded scan. Tests have not been executed (security guardrail).`;
-      } else if (unrelatedInspectedTests.length > 0 && candidateTestFiles.every((t) => t.relevance_verdict === 'UNRELATED')) {
-        testStatus = 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
-        defaultRationale = `Inspected candidate test files in bounded scan (${unrelatedInspectedTests.map((t) => t.path).join(', ')}) do not verify criterion requirements. No relevant automated test evidence confirmed in bounded scan. Candidate tests were not executed (security guardrail).`;
-      } else if (candidateTestFiles.some((t) => !t.assertions_inspected)) {
-        testStatus = 'POSSIBLE TEST CANDIDATE';
-        defaultRationale = `Candidate test path(s) found in repository tree (${candidateTestFiles.map((t) => t.path).join(', ')}). Assertions not inspected; tests have not been executed.`;
-      } else {
-        testStatus = 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
-        defaultRationale = 'No test evidence found in scanned files. Test coverage cannot be established from bounded context.';
-      }
-
-      c.test_evidence = {
-        status: testStatus,
-        candidate_test_files: candidateTestFiles,
-        rationale: defaultRationale,
-        proposed_manual_validation: 'Run local test suite and inspect test coverage for affected components.',
-        assertions_inspected: candidateTestFiles.some((t) => t.assertions_inspected),
-        test_executed: false,
-      };
+      c.test_evidence = deriveTestEvidenceSummary(candidateTestFiles, {
+        isTreeTruncated: scanBoundaries.is_tree_truncated,
+        criterionDescription: c.description,
+        proposedManualValidation: 'Run local test suite and inspect test coverage for affected components.',
+      });
     }
   });
 
