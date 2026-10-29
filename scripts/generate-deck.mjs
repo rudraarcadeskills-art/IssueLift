@@ -134,74 +134,254 @@ async function buildPresentation() {
   );
 
   // -------------------------------------------------------------
-  // SLIDE 2: Competitive Reality & Product Positioning
+  // SLIDE 2: The IssueLift Workflow (Five-Step Pre-Coding Engine)
   // -------------------------------------------------------------
   const slide2 = pres.addSlide();
   slide2.background = { color: CANVAS };
 
-  slide2.addText('MARKET SNAPSHOT & POSITIONING', {
-    x: 0.8,
-    y: 0.5,
-    w: 11.5,
-    h: 0.3,
+  slide2.addText('THE ISSUE LIFT WORKFLOW', {
+    x: 0.72,
+    y: 0.43,
+    w: 6.0,
+    h: 0.28,
     fontSize: 12,
     bold: true,
     color: INDIGO,
     fontFace: 'Arial',
   });
 
-  slide2.addText('Adjacent Categories vs. IssueLift Pre-Edit Contract', {
-    x: 0.8,
-    y: 0.9,
-    w: 11.5,
-    h: 0.6,
-    fontSize: 26,
+  slide2.addText('How IssueLift works before coding', {
+    x: 0.72,
+    y: 0.8,
+    w: 11.9,
+    h: 0.58,
+    fontSize: 28,
     bold: true,
     color: INK,
     fontFace: 'Arial',
   });
 
-  // Table of competitors with explicit contrast styling
-  const tableRows = [
-    [
-      makeCell('Tool / Category', true),
-      makeCell('What It Does Well', true),
-      makeCell('What IssueLift Does NOT Copy', true),
-      makeCell('IssueLift Differentiation', true),
-    ],
-    [
-      makeCell('GoodFirst / IssueScout', false, true),
-      makeCell('Issue discovery, beginner issue pickers, difficulty tags.'),
-      makeCell('Do not build another issue directory or generic difficulty score.'),
-      makeCell('Starts AFTER the issue is picked; defines contract before code edits.'),
-    ],
-    [
-      makeCell('Ossistant', false, true),
-      makeCell('Repo chatbot, general explanation of open source programs.'),
-      makeCell('Do not build a conversational chat assistant.'),
-      makeCell('Deterministic, structured, exportable Proof Bundle artifacts.'),
-    ],
-    [
-      makeCell('CodeRabbit', false, true),
-      makeCell('Automated post-PR code review and pre-merge checks.'),
-      makeCell('Do not build post-PR code review.'),
-      makeCell('Pre-PR clarification: align on "done" before submitting PRs.'),
-    ],
-    [
-      makeCell('GitHub Copilot / SWE-agent', false, true),
-      makeCell('Autonomous coding agents creating automated pull requests.'),
-      makeCell('Do not compete as an autonomous patch agent.'),
-      makeCell('Human contributor empowerment: verifiable truth trail & test radar.'),
-    ],
+  slide2.addText('Turn a public GitHub issue into a reviewable plan with evidence—not guesswork.', {
+    x: 0.74,
+    y: 1.46,
+    w: 11.8,
+    h: 0.34,
+    fontSize: 14,
+    color: 'B5C0D3',
+    fontFace: 'Arial',
+  });
+
+  const workflowSteps = [
+    {
+      num: '01',
+      title: 'Submit issue',
+      desc: 'Paste a public GitHub issue URL. Check issue status and context.',
+      color: INDIGO,
+    },
+    {
+      num: '02',
+      title: 'Bounded scan',
+      desc: 'Read repository files, manifests and docs within API limits.',
+      color: '67E8F9',
+    },
+    {
+      num: '03',
+      title: 'Draft contract',
+      desc: 'Gemma 4 extracts explicit criteria and labels inferred proposals.',
+      color: '5EEAD4',
+    },
+    {
+      num: '04',
+      title: 'Trace evidence',
+      desc: 'Map criteria to candidate source/test files and documented commands.',
+      color: INDIGO,
+    },
+    {
+      num: '05',
+      title: 'Verify & export',
+      desc: 'Claim Gate rejects fabricated paths; export a Proof Bundle and handoff.',
+      color: '67E8F9',
+    },
   ];
 
-  slide2.addTable(tableRows, {
-    x: 0.8,
-    y: 1.7,
-    w: 11.7,
-    h: 5.0,
-    fontSize: 11,
-    border: { color: BORDER, width: 1 },
+  const cardW = 2.24;
+  const cardH = 3.26;
+  const cardY = 2.18;
+  const gap = 0.18;
+  const startX = 0.72;
+
+  workflowSteps.forEach((step, idx) => {
+    const x = startX + idx * (cardW + gap);
+
+    // Card background
+    slide2.addShape(pres.ShapeType.roundRect, {
+      x,
+      y: cardY,
+      w: cardW,
+      h: cardH,
+      fill: { color: CARD_BG },
+      line: { color: '2A3953', width: 1 },
+    });
+
+    // Accent stripe
+    slide2.addShape(pres.ShapeType.rect, {
+      x: x + 0.02,
+      y: 2.2,
+      w: cardW - 0.04,
+      h: 0.055,
+      fill: { color: step.color },
+      line: { color: step.color, width: 0 },
+    });
+
+    // Number badge
+    slide2.addText(step.num, {
+      shape: pres.ShapeType.ellipse,
+      x: x + 0.18,
+      y: 2.46,
+      w: 0.52,
+      h: 0.52,
+      fill: { color: step.color },
+      color: '0A0F1F',
+      fontSize: 13,
+      bold: true,
+      align: 'center',
+      valign: 'middle',
+      fontFace: 'Arial',
+    });
+
+    // Step title
+    slide2.addText(step.title, {
+      x: x + 0.18,
+      y: 3.18,
+      w: 1.88,
+      h: 0.46,
+      fontSize: 17,
+      bold: true,
+      color: INK,
+      fontFace: 'Arial',
+    });
+
+    // Step description
+    slide2.addText(step.desc, {
+      x: x + 0.18,
+      y: 3.74,
+      w: 1.88,
+      h: 1.27,
+      fontSize: 12,
+      color: 'B5C0D3',
+      fontFace: 'Arial',
+      lineSpacing: 16,
+    });
+
+    // Chevron between cards
+    if (idx < workflowSteps.length - 1) {
+      slide2.addShape(pres.ShapeType.chevron, {
+        x: x + cardW + 0.035,
+        y: 3.74,
+        w: 0.12,
+        h: 0.25,
+        fill: { color: '2A3953' },
+        line: { color: '2A3953', width: 0 },
+      });
+    }
+  });
+
+  // Bottom callout banner
+  slide2.addShape(pres.ShapeType.roundRect, {
+    x: 0.72,
+    y: 5.78,
+    w: 11.9,
+    h: 0.78,
+    fill: { color: '141E31' },
+    line: { color: '2A3953', width: 1 },
+  });
+
+  slide2.addText('GEMMA 4 PROPOSES', {
+    x: 0.98,
+    y: 6.01,
+    w: 2.15,
+    h: 0.25,
+    fontSize: 12,
+    bold: true,
+    color: '67E8F9',
+    fontFace: 'Arial',
+  });
+
+  slide2.addText('•', {
+    x: 3.05,
+    y: 5.985,
+    w: 0.2,
+    h: 0.3,
+    fontSize: 16,
+    bold: true,
+    color: 'B5C0D3',
+    align: 'center',
+    fontFace: 'Arial',
+  });
+
+  slide2.addText('CLAIM GATE VERIFIES', {
+    x: 3.42,
+    y: 6.01,
+    w: 2.55,
+    h: 0.25,
+    fontSize: 12,
+    bold: true,
+    color: '5EEAD4',
+    fontFace: 'Arial',
+  });
+
+  slide2.addText('•', {
+    x: 6.01,
+    y: 5.985,
+    w: 0.2,
+    h: 0.3,
+    fontSize: 16,
+    bold: true,
+    color: 'B5C0D3',
+    align: 'center',
+    fontFace: 'Arial',
+  });
+
+  slide2.addText('CONTRIBUTOR DECIDES', {
+    x: 6.38,
+    y: 6.01,
+    w: 2.55,
+    h: 0.25,
+    fontSize: 12,
+    bold: true,
+    color: INDIGO,
+    fontFace: 'Arial',
+  });
+
+  slide2.addText('Scans are bounded; unverified evidence stays explicitly uncertain.', {
+    x: 8.78,
+    y: 5.98,
+    w: 3.55,
+    h: 0.34,
+    fontSize: 10,
+    color: 'B5C0D3',
+    fontFace: 'Arial',
+  });
+
+  // Footer
+  slide2.addText('ISSUELIFT  •  HACKTOBERFEST 2026', {
+    x: 0.72,
+    y: 7.12,
+    w: 5.6,
+    h: 0.16,
+    fontSize: 8,
+    color: 'B5C0D3',
+    fontFace: 'Arial',
+  });
+
+  slide2.addText('2', {
+    x: 12.34,
+    y: 7.1,
+    w: 0.22,
+    h: 0.18,
+    fontSize: 8,
+    color: 'B5C0D3',
+    align: 'right',
     fontFace: 'Arial',
   });
 
