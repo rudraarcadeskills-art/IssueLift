@@ -709,7 +709,7 @@ async function buildPresentation() {
     fontFace: 'Arial',
   });
 
-  slide6.addText('*ProofBench evaluates 7 deterministic guardrail fixtures in eval/fixtures/ — distinct from the 78 unit tests in tests/ (Vitest).*', {
+  slide6.addText('*ProofBench evaluates 7 deterministic guardrail fixtures in eval/fixtures/ — distinct from the 80 unit tests in tests/ (Vitest).*', {
     x: 0.8,
     y: 1.4,
     w: 11.7,
@@ -895,8 +895,8 @@ async function buildPresentation() {
     ],
     [
       makeCell('1. Proper README & Tests', false, true),
-      makeCell('README.md verified; 78 unit tests passing across 4 suites (vitest in tests/)'),
-      makeCell('PASS (78/78 Passing)', false, false, LIME),
+      makeCell('README.md verified; 80 unit tests passing across 4 suites (vitest in tests/)'),
+      makeCell('PASS (80/80 Passing)', false, false, LIME),
     ],
     [
       makeCell('2. Gemma Central', false, true),

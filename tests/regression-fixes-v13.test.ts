@@ -19,6 +19,7 @@ import { ISSUELIFT_REPO_URL } from '../src/lib/config';
 import {
   AcceptanceCriterion,
   CandidateTestFile,
+  ContributionContract,
   GitHubIssueMetadata,
   ScanBoundaries,
   SetupTruth,
@@ -1589,5 +1590,124 @@ describe('BUG 10 — Test Evidence Relevance & Provenance for TypeScript Issue #
   });
 });
 
+describe('BUG 11 — Proof Bundle Export Candidate Implementation Provenance Mapping', () => {
+  it('maps each criterion candidate implementation file to an accurate source record in top-level sources', () => {
+    const fileList = [
+      'packages/next/src/server/app-render/app-render.tsx',
+      'packages/next/src/client/components/not-found.tsx',
+      'packages/next/src/shared/lib/router.ts',
+    ];
 
+    // mockSources initially contains only issue-body and repo-tree (no file-specific source records)
+    const contract = compileDeterministicBaselineContract(
+      mockMetadata,
+      mockSources,
+      fileList,
+      mockSetupTruth,
+      mockScanBoundaries
+    );
+
+    const ac01 = contract.criteria[0];
+    expect(ac01.id).toBe('AC-01');
+    expect(ac01.candidate_implementation_files.length).toBeGreaterThan(0);
+
+    const exportedJsonStr = generateProofBundleJson(contract);
+    const parsed = JSON.parse(exportedJsonStr);
+
+    const exportedAc01 = parsed.criteria.find((c: any) => c.id === 'AC-01');
+    expect(exportedAc01).toBeDefined();
+    expect(exportedAc01.candidate_implementation_files.length).toBeGreaterThan(0);
+
+    // Each candidate path in AC-01 must have a corresponding source record in top-level sources
+    for (const candFile of exportedAc01.candidate_implementation_files) {
+      const matchingSource = parsed.sources.find((s: any) => s.path === candFile.path);
+      expect(matchingSource).toBeDefined();
+      expect(candFile.source_id).toBe(matchingSource.source_id);
+      expect(matchingSource.verified_exists).toBe(candFile.verified_exists);
+      expect(matchingSource.verification_status).toBe('VERIFIED');
+      // Inferred relevance is strictly preserved on candidate file; not promoted to verified relevance
+      expect(candFile.relevance_status).toBe('AI-INFERRED');
+    }
+  });
+
+  it('preserves existing source IDs when matching path is present and handles unverified paths without promoting relevance', () => {
+    const preExistingSource: SourceEvidence = {
+      source_id: 'file-1',
+      canonical_url: 'https://github.com/vercel/next.js/blob/canary/src/index.ts',
+      path: 'src/index.ts',
+      source_type: 'code',
+      excerpt: 'Existing candidate file',
+      verified_exists: true,
+      verification_status: 'VERIFIED',
+    };
+
+    const initialSources: SourceEvidence[] = [...mockSources, preExistingSource];
+
+    const contract: ContributionContract = {
+      ...compileDeterministicBaselineContract(
+        mockMetadata,
+        initialSources,
+        ['src/index.ts', 'src/missing.ts'],
+        mockSetupTruth,
+        mockScanBoundaries
+      ),
+      criteria: [
+        {
+          id: 'AC-01',
+          description: 'Ensure implementation paths map to sources',
+          criterion_type: 'EXPLICIT',
+          exact_quote: 'Existing candidate file',
+          status: 'ACTIONABLE',
+          status_rationale: 'Verified',
+          needs_maintainer_clarification: false,
+          candidate_implementation_files: [
+            {
+              path: 'src/index.ts',
+              relevance_rationale: 'Mapped to existing source',
+              source_id: 'repo-tree', // Disconnected source_id before export
+              verified_exists: true,
+              relevance_status: 'AI-INFERRED',
+            },
+            {
+              path: 'src/unverified.ts',
+              relevance_rationale: 'Nonexistent file rejected by claim gate',
+              source_id: 'unverified',
+              verified_exists: false,
+              relevance_status: 'UNKNOWN',
+            },
+          ],
+          test_evidence: {
+            status: 'NO TEST EVIDENCE FOUND IN SCANNED FILES',
+            candidate_test_files: [],
+            rationale: 'None',
+          },
+        },
+      ],
+      sources: initialSources,
+    };
+
+    const exportedJsonStr = generateProofBundleJson(contract);
+    const parsed = JSON.parse(exportedJsonStr);
+
+    const exportedAc01 = parsed.criteria[0];
+    const indexCandidate = exportedAc01.candidate_implementation_files[0];
+    const unverifiedCandidate = exportedAc01.candidate_implementation_files[1];
+
+    // Reconciled with existing source record 'file-1'
+    expect(indexCandidate.source_id).toBe('file-1');
+    const indexSource = parsed.sources.find((s: any) => s.source_id === 'file-1');
+    expect(indexSource?.path).toBe('src/index.ts');
+    expect(indexSource?.verified_exists).toBe(true);
+    expect(indexCandidate.relevance_status).toBe('AI-INFERRED');
+
+    // Unverified candidate added as unverified source without promoting status
+    expect(unverifiedCandidate.source_id).toBeDefined();
+    expect(unverifiedCandidate.source_id).not.toBe('unverified');
+    const unverifiedSource = parsed.sources.find((s: any) => s.source_id === unverifiedCandidate.source_id);
+    expect(unverifiedSource?.path).toBe('src/unverified.ts');
+    expect(unverifiedSource?.verified_exists).toBe(false);
+    expect(unverifiedSource?.verification_status).toBe('UNKNOWN');
+    expect(unverifiedCandidate.relevance_status).toBe('UNKNOWN');
+  });
+});
 

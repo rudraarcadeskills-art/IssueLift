@@ -109,7 +109,7 @@ The following results were recorded in the project’s latest reported local ver
 
 | Command | Reported result | Purpose |
 |---|---:|---|
-| `npm test` | 78 tests passed across 4 suites | Unit and regression tests |
+| `npm test` | 80 tests passed across 4 suites | Unit and regression tests |
 | `npm run eval:proofbench` | 7/7 fixtures passed | Offline deterministic guardrail evaluation |
 | `npm run typecheck` | Passed, 0 TypeScript errors | Type checking |
 | `npm run build` | Passed | Production build |

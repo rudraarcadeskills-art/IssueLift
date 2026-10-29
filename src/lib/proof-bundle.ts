@@ -1,4 +1,4 @@
-import { ContributionContract } from './types';
+import { ContributionContract, SourceEvidence } from './types';
 import { ISSUELIFT_REPO_URL, ISSUELIFT_CANONICAL_URL } from './config';
 import { formatCandidateTestFileSummary } from './test-evidence';
 
@@ -159,8 +159,77 @@ ${audit.warnings.length > 0 ? `\n### Audit Warnings:\n${audit.warnings.map((w) =
 }
 
 export function generateProofBundleJson(contract: ContributionContract): string {
+  const sources: SourceEvidence[] = [...(contract.sources || [])];
+  const sourceByPath = new Map<string, SourceEvidence>();
+  sources.forEach((s) => {
+    if (s.path) {
+      sourceByPath.set(s.path, s);
+    }
+  });
+
+  const existingSourceIds = new Set(sources.map((s) => s.source_id));
+  let fileIndex = 1;
+  sources.forEach((s) => {
+    const m = s.source_id.match(/^file-(\d+)$/);
+    if (m) {
+      const num = parseInt(m[1], 10);
+      if (num >= fileIndex) fileIndex = num + 1;
+    }
+  });
+
+  const owner = contract.issue_metadata?.owner;
+  const repo = contract.issue_metadata?.repo;
+  const defaultBranch = contract.issue_metadata?.default_branch || 'main';
+
+  const criteria = (contract.criteria || []).map((c) => {
+    const candidate_implementation_files = (c.candidate_implementation_files || []).map((file) => {
+      let sourceRecord = sources.find((s) => s.source_id === file.source_id && s.path === file.path);
+      if (!sourceRecord) {
+        sourceRecord = sourceByPath.get(file.path);
+      }
+
+      if (!sourceRecord) {
+        while (existingSourceIds.has(`file-${fileIndex}`)) {
+          fileIndex++;
+        }
+        const sourceId = `file-${fileIndex++}`;
+        existingSourceIds.add(sourceId);
+
+        const canonicalUrl = owner && repo
+          ? `https://github.com/${owner}/${repo}/blob/${defaultBranch}/${file.path}`
+          : file.path;
+
+        sourceRecord = {
+          source_id: sourceId,
+          canonical_url: canonicalUrl,
+          path: file.path,
+          source_type: 'code',
+          excerpt: `Candidate implementation file identified in repository tree (${file.path})`,
+          verified_exists: Boolean(file.verified_exists),
+          verification_status: file.verified_exists ? 'VERIFIED' : 'UNKNOWN',
+          rejection_reason: file.verified_exists ? undefined : 'Path not found in scanned repository tree.',
+        };
+
+        sources.push(sourceRecord);
+        sourceByPath.set(file.path, sourceRecord);
+      }
+
+      return {
+        ...file,
+        source_id: sourceRecord.source_id,
+      };
+    });
+
+    return {
+      ...c,
+      candidate_implementation_files,
+    };
+  });
+
   const exportPayload = {
     ...contract,
+    sources,
+    criteria,
     issuelift_project_url: ISSUELIFT_REPO_URL,
     issuelift_canonical_url: ISSUELIFT_CANONICAL_URL,
   };
