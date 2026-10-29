@@ -12,6 +12,7 @@ import {
   TestEvidenceStatus,
 } from './types';
 import { deriveTestEvidenceSummary } from './test-evidence';
+import { evaluateTestRelevance, isLikelyTestFile } from './github';
 
 export interface ClaimGateValidationResult {
   validatedCriteria: AcceptanceCriterion[];
@@ -34,6 +35,7 @@ export function runDeterministicClaimGate(
 ): ClaimGateValidationResult {
   const fileSet = new Set(repositoryFiles);
   const sourceIdSet = new Set(sources.map((s) => s.source_id));
+  const sourcePathSet = new Set(sources.map((s) => s.path));
 
   let rejectedPathsCount = 0;
   let rejectedSourceIdsCount = 0;
@@ -159,23 +161,49 @@ export function runDeterministicClaimGate(
     // Validate Test Evidence
     const validatedTestFiles: CandidateTestFile[] = [];
 
-    if (!scanBoundaries.is_tree_truncated) {
-      for (const tFile of criterion.test_evidence?.candidate_test_files || []) {
-        if (!fileSet.has(tFile.path)) {
+    for (const tFile of criterion.test_evidence?.candidate_test_files || []) {
+      const existsInTree = fileSet.has(tFile.path);
+      const existsInSources = sourcePathSet.has(tFile.path);
+
+      if (!existsInTree && !existsInSources) {
+        if (!scanBoundaries.is_tree_truncated) {
           rejectedPathsCount++;
           warnings.push(`Claim Gate: Candidate test path "${tFile.path}" in ${id} not found in tree.`);
           continue;
         }
+      }
 
-        const isAutomatedTest = tFile.is_automated_test !== false;
-        const relevance = tFile.relevance_verdict || (isAutomatedTest ? 'POTENTIALLY_RELEVANT' : 'UNRELATED');
+      const isAutomatedTest = tFile.is_automated_test !== false;
+      const relevance = tFile.relevance_verdict || (isAutomatedTest ? 'POTENTIALLY_RELEVANT' : 'UNRELATED');
+
+      validatedTestFiles.push({
+        ...tFile,
+        verified_exists: existsInTree || existsInSources,
+        assertions_inspected: Boolean(tFile.assertions_inspected),
+        is_automated_test: isAutomatedTest,
+        relevance_verdict: relevance,
+        test_executed: false,
+      });
+    }
+
+    // Reconcile fetched test-file sources if validated candidate list is empty
+    if (validatedTestFiles.length === 0) {
+      const fetchedTestSources = sources.filter(
+        (s) => s.source_type === 'test' || isLikelyTestFile(s.path) || s.path.includes('/tests/') || s.path.includes('/test/')
+      );
+      for (const tSource of fetchedTestSources) {
+        const isInspected = Boolean(tSource.excerpt && tSource.excerpt.trim().length > 0);
+        const relevance = isInspected
+          ? evaluateTestRelevance(tSource.path, tSource.excerpt, criterion.description, criterion.exact_quote)
+          : { isRelevant: false, rationale: 'Uninspected test source.' };
 
         validatedTestFiles.push({
-          ...tFile,
+          path: tSource.path,
+          source_id: tSource.source_id,
           verified_exists: true,
-          assertions_inspected: Boolean(tFile.assertions_inspected),
-          is_automated_test: isAutomatedTest,
-          relevance_verdict: relevance,
+          assertions_inspected: isInspected,
+          is_automated_test: true,
+          relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : 'UNRELATED') : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
           test_executed: false,
         });
       }
@@ -214,6 +242,18 @@ export function runDeterministicClaimGate(
   if (metadata.has_linked_pr_signal) {
     verdict = 'CLARIFY FIRST';
     reasons.push('Linked pull request or active PR reference detected. An implementation may already be in flight.');
+  }
+
+  // Check for target repository / architecture ambiguity (e.g. between legacy TypeScript compiler and TypeScript-Go)
+  const allCommentsText = (metadata.comments || []).map((c) => c.body).join('\n');
+  const hasTargetAmbiguity =
+    /(?:should this fix target|target the main|target.*(?:typescript-go|legacy|different repo)|accepting community contributions)/i.test(allCommentsText) ||
+    /(?:target.*(?:repository|architecture|repo)|clarif(?:y|ication).*(?:target|repo|architecture))/i.test(allCommentsText) ||
+    metadata.labels.some((l) => /needs clarification|ambiguous/i.test(l.name));
+
+  if (hasTargetAmbiguity) {
+    verdict = 'CLARIFY FIRST';
+    reasons.push('Implementation target is ambiguous between legacy TypeScript compiler and TypeScript-Go; maintainer clarification is required before submitting PR.');
   }
 
   const hasAmbiguousCriteria = validatedCriteria.some((c) => c.status === 'AMBIGUOUS' || c.needs_maintainer_clarification);

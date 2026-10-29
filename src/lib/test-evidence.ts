@@ -65,7 +65,33 @@ export function deriveTestEvidenceSummary(
 
   if (isTreeTruncated) {
     status = 'SCAN INCOMPLETE / UNKNOWN';
-    rationale = 'Repository tree was truncated by GitHub API limit; test evidence scan is incomplete.';
+    if (normalizedCandidates.length > 0 && anyInspected) {
+      const paths = normalizedCandidates.map((t) => t.path).join(', ');
+      const relevant = normalizedCandidates.filter(
+        (t) => t.is_automated_test && t.assertions_inspected && (t.relevance_verdict === 'CONFIRMED_RELEVANT' || t.relevance_verdict === 'RELEVANT')
+      );
+      const unrelated = normalizedCandidates.filter(
+        (t) => t.is_automated_test && t.assertions_inspected && t.relevance_verdict === 'UNRELATED'
+      );
+      if (relevant.length > 0 && unrelated.length > 0) {
+        const relPaths = relevant.map((t) => t.path).join(', ');
+        const unrelPaths = unrelated.map((t) => t.path).join(', ');
+        rationale = `Repository tree was truncated by GitHub API size limits; test evidence scan is incomplete. Inspected test file(s) (${relPaths}) verified relevant to criterion from content, while additional candidate(s) (${unrelPaths}) were unrelated. Exhaustive test coverage cannot be confirmed across full repository. Tests were NOT executed (security guardrail).`;
+      } else if (relevant.length > 0) {
+        const relPaths = relevant.map((t) => t.path).join(', ');
+        rationale = `Repository tree was truncated by GitHub API size limits; test evidence scan is incomplete. Inspected test file(s) (${relPaths}) verified relevant to criterion from content, but exhaustive test coverage cannot be confirmed across full repository. Tests were NOT executed (security guardrail).`;
+      } else if (unrelated.length > 0) {
+        const unrelPaths = unrelated.map((t) => t.path).join(', ');
+        rationale = `Repository tree was truncated by GitHub API size limits; test evidence scan is incomplete. Inspected candidate test file(s) in bounded scan (${unrelPaths}) do not verify criterion requirements. Exhaustive test coverage cannot be confirmed across full repository. Tests were NOT executed (security guardrail).`;
+      } else {
+        rationale = `Repository tree was truncated by GitHub API size limits; test evidence scan is incomplete. Inspected candidate(s) (${paths}) surfaced from verified source content with relevance verdicts. Tests were NOT executed (security guardrail).`;
+      }
+    } else if (normalizedCandidates.length > 0) {
+      const candPaths = normalizedCandidates.map((t) => t.path).join(', ');
+      rationale = `Repository tree was truncated by GitHub API size limits; test evidence scan is incomplete. Candidate test path(s) (${candPaths}) surfaced but complete scan could not finish. Tests were NOT executed (security guardrail).`;
+    } else {
+      rationale = 'Repository tree was truncated by GitHub API limit; test evidence scan is incomplete.';
+    }
   } else if (normalizedCandidates.length === 0) {
     status = 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
     rationale = 'No test evidence found in scanned files. Test coverage cannot be established from bounded context.';

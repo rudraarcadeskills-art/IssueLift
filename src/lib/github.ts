@@ -918,7 +918,7 @@ const FILE_EXTENSIONS = new Set([
 
 const STOP_WORDS = new Set([
   'the', 'and', 'for', 'this', 'that', 'with', 'from', 'have', 'has', 'had',
-  'empty', 'issue', 'when', 'does', 'will', 'not',
+  'empty', 'issue', 'when', 'does', 'will', 'not', 'typescript',
   'should', 'error', 'failed', 'what', 'about', 'there', 'only', 'into', 'also',
   'some', 'more', 'page', 'body', 'test', 'tests', 'code', 'file', 'files',
   'using', 'after', 'before', 'where', 'which', 'their', 'could', 'would', 'here'
@@ -943,15 +943,20 @@ export function rankRepositoryPaths(
   issueTitle: string,
   issueBody: string = '',
   labels: string[] = [],
-  criteriaDescriptions: string[] = []
+  criteriaDescriptions: string[] = [],
+  comments: Array<{ author?: string; body: string }> | string[] = [],
+  verifiedSources?: import('./types').SourceEvidence[]
 ): RankedPathsResult {
-  const combinedText = `${issueTitle}\n${issueBody}\n${labels.join(' ')}\n${criteriaDescriptions.join('\n')}`;
+  const commentsText = Array.isArray(comments)
+    ? comments.map((c) => (typeof c === 'string' ? c : c.body || '')).join('\n')
+    : '';
+  const combinedText = `${issueTitle}\n${issueBody}\n${labels.join(' ')}\n${criteriaDescriptions.join('\n')}\n${commentsText}`;
 
   // Extract explicit technical identifiers: backticks, path segments, and camelCase/kebab-case terms
   const highValueTokens = new Set<string>();
   const generalTokens = new Set<string>();
 
-  // 1. Backticked tokens e.g. `notFound()` or `__next_error__`
+  // 1. Backticked tokens e.g. `notFound()`, `checker.ts`, or `inferTypeArguments`
   const backtickMatches = combinedText.match(/`([^`]+)`/g) || [];
   for (const m of backtickMatches) {
     const raw = m.slice(1, -1).trim();
@@ -965,7 +970,7 @@ export function rankRepositoryPaths(
     }
   }
 
-  // 2. Path-like strings e.g. packages/next/src/...
+  // 2. Path-like strings e.g. packages/next/src/... or src/compiler/checker.ts
   const pathMatches = combinedText.match(/(?:[a-zA-Z0-9_-]+\/)+[a-zA-Z0-9_.-]+/g) || [];
   for (const p of pathMatches) {
     const rawBase = p.split('/').pop()?.toLowerCase() || '';
@@ -975,7 +980,7 @@ export function rankRepositoryPaths(
     }
   }
 
-  // 3. Hyphenated technical identifiers (e.g. app-render, not-found, server-render)
+  // 3. Hyphenated technical identifiers (e.g. app-render, not-found, typescript-go)
   const hyphenMatches = combinedText.match(/\b[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)+\b/g) || [];
   for (const h of hyphenMatches) {
     const clean = h.toLowerCase().trim();
@@ -989,7 +994,7 @@ export function rankRepositoryPaths(
     }
   }
 
-  // 4. CamelCase technical identifiers (e.g. getErrorRSCPayload, notFound, cacheComponents)
+  // 4. CamelCase technical identifiers (e.g. getErrorRSCPayload, inferTypeArguments)
   const camelMatches = combinedText.match(/\b[a-zA-Z]+[a-z0-9]+(?:[A-Z][a-zA-Z0-9]+)+\b/g) || [];
   for (const c of camelMatches) {
     const clean = c.toLowerCase().trim();
@@ -998,18 +1003,33 @@ export function rankRepositoryPaths(
     }
   }
 
-  // 5. Explicit area phrases (e.g. "in app-render", "under server/")
+  // 5. Explicit area phrases (e.g. "in app-render", "inside checker.ts", "under server/")
   const areaTokens = new Set<string>();
-  const areaMatches = combinedText.match(/(?:in|under|module|area|package)\s+([a-zA-Z0-9_/-]+)/gi) || [];
+  const areaMatches = combinedText.match(/(?:in|inside|under|module|area|package)\s+([a-zA-Z0-9_.-]+)/gi) || [];
   for (const a of areaMatches) {
-    const term = a.replace(/^(?:in|under|module|area|package)\s+/i, '').toLowerCase().trim();
+    const rawTerm = a.replace(/^(?:in|inside|under|module|area|package)\s+/i, '').toLowerCase().trim();
+    const term = rawTerm.replace(/\.[a-z0-9]+$/i, '');
     if (term.length >= 3 && !STOP_WORDS.has(term) && !FILE_EXTENSIONS.has(term)) {
       highValueTokens.add(term);
       areaTokens.add(term);
     }
   }
 
-  // 6. General tokens
+  // 6. GitHub Label terms (e.g. "Domain: check: Type Inference" -> "check", "inference")
+  for (const label of labels) {
+    const labelTokens = label
+      .toLowerCase()
+      .split(/[^a-z0-9_-]+/)
+      .filter((t) => t.length >= 3 && !STOP_WORDS.has(t) && !FILE_EXTENSIONS.has(t));
+    labelTokens.forEach((t) => {
+      highValueTokens.add(t);
+      if (t === 'check' || t === 'checker' || t === 'inference') {
+        areaTokens.add(t);
+      }
+    });
+  }
+
+  // 7. General tokens
   const words = combinedText
     .toLowerCase()
     .split(/[^a-z0-9_-]+/)
@@ -1076,8 +1096,8 @@ export function rankRepositoryPaths(
         matched = true;
       }
 
-      if (lower.includes('/' + token + '/')) {
-        score += 35; // Directory segment match (e.g. /app-render/)
+      if (lower.includes('/' + token + '/') || lower.includes('/' + token + '.')) {
+        score += 35; // Directory segment or file prefix match (e.g. /app-render/ or /checker.)
         matched = true;
       } else if (!matched && lower.includes(token)) {
         score += 10;
@@ -1086,7 +1106,7 @@ export function rankRepositoryPaths(
 
     // Specific boost for matching explicitly cited area/module
     for (const area of areaTokens) {
-      if (lower.includes('/' + area + '/') || basenameNoExt === area) {
+      if (lower.includes('/' + area + '/') || basenameNoExt === area || lower.includes('/' + area + '.')) {
         score += 50;
       }
     }
@@ -1118,6 +1138,35 @@ export function rankRepositoryPaths(
       }
 
       const lowerCombined = combinedText.toLowerCase();
+
+      // Compiler architecture recognition
+      const isCompilerContext =
+        lowerCombined.includes('compiler') ||
+        lowerCombined.includes('type inference') ||
+        lowerCombined.includes('checker') ||
+        lowerCombined.includes('infertypearguments') ||
+        lowerCombined.includes('parser') ||
+        lowerCombined.includes('check:');
+
+      if (isCompilerContext) {
+        if (lower.includes('/compiler/') || lower.includes('/src/compiler/') || lower.includes('tsc/internal/')) {
+          score += 30;
+        }
+      }
+
+      // Verified source content relevance boost
+      if (verifiedSources && verifiedSources.length > 0) {
+        const matchingSource = verifiedSources.find((s) => s.path === file);
+        if (matchingSource && matchingSource.excerpt) {
+          const lowerExcerpt = matchingSource.excerpt.toLowerCase();
+          for (const token of highValueTokens) {
+            if (lowerExcerpt.includes(token)) {
+              score += 15;
+            }
+          }
+        }
+      }
+
       const isServerContext =
         lowerCombined.includes('server') ||
         lowerCombined.includes('ssr') ||

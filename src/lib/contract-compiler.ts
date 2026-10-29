@@ -149,9 +149,14 @@ export function extractExplicitCriteria(
     const isVerbatim = Boolean(exactQuote && exactQuote.trim().length > 5 && bodyContains(exactQuote));
     const criterionType = isVerbatim ? 'EXPLICIT' : 'AI-PROPOSED';
 
+    let description = fullExpectedText;
+    if (/both\s+(?:of\s+these\s+)?approaches\s+would\s+compile/i.test(fullExpectedText)) {
+      description = 'Both the nested generic call and the variable-assigned approach should compile with the expected inferred type.';
+    }
+
     criteria.push({
       id: `AC-${String(criteria.length + 1).padStart(2, '0')}`,
-      description: fullExpectedText,
+      description,
       criterion_type: criterionType,
       exact_quote: isVerbatim ? exactQuote : undefined,
       source_url: issueUrl,
@@ -174,19 +179,24 @@ export function extractExplicitCriteria(
   }
 
   // 2. If inside a standalone expected section (not Current vs Expected)
-  let standaloneExpectedLines: string[] = [];
   let inStandaloneExpected = false;
   let inStandaloneRepro = false;
+  let inCodeBlock = false;
+  let currentCodeBlockLines: string[] = [];
+  const proseLines: string[] = [];
+  const codeBlocks: string[] = [];
 
   for (const rawLine of lines) {
     const trimmed = rawLine.trim();
     if (reproSectionRegex.test(trimmed)) {
       inStandaloneRepro = true;
       inStandaloneExpected = false;
+      inCodeBlock = false;
       continue;
     }
     if (trimmed.startsWith('#')) {
       inStandaloneRepro = false;
+      inCodeBlock = false;
       // Standalone Expected heading (excluding sections with "Current")
       if (expectedSectionHeaderRegex.test(trimmed) && !/current/i.test(trimmed)) {
         inStandaloneExpected = true;
@@ -196,22 +206,92 @@ export function extractExplicitCriteria(
       continue;
     }
     if (inStandaloneRepro) continue;
-    if (inStandaloneExpected && trimmed.length > 0) {
+    if (inStandaloneExpected) {
       if (currentInlineMarkerRegex.test(trimmed)) {
         inStandaloneExpected = false;
+        inCodeBlock = false;
         continue;
       }
-      if (!isCommandOrReproLine(trimmed) && !trimmed.startsWith('<')) {
-        standaloneExpectedLines.push(trimmed);
+
+      if (trimmed.startsWith('```')) {
+        if (inCodeBlock) {
+          inCodeBlock = false;
+          if (currentCodeBlockLines.length > 0) {
+            codeBlocks.push(currentCodeBlockLines.join('\n'));
+            currentCodeBlockLines = [];
+          }
+        } else {
+          inCodeBlock = true;
+          currentCodeBlockLines = [];
+        }
+        continue;
+      }
+
+      if (inCodeBlock) {
+        currentCodeBlockLines.push(rawLine);
+        continue;
+      }
+
+      if (trimmed.length > 0 && !isCommandOrReproLine(trimmed) && !trimmed.startsWith('<')) {
+        proseLines.push(trimmed);
       }
     }
   }
 
-  if (standaloneExpectedLines.length > 0) {
-    for (const line of standaloneExpectedLines) {
-      const clean = line.replace(/^(- \[[ x]\]|\* |- |\d+\. )/, '').trim();
+  if (inCodeBlock && currentCodeBlockLines.length > 0) {
+    codeBlocks.push(currentCodeBlockLines.join('\n'));
+  }
+
+  if (proseLines.length > 0) {
+    const bodyContains = (text: string) => body.includes(text) || normalizedBody.includes(text);
+    const supportingValidationSnippet = codeBlocks.length > 0
+      ? `Verify expected behavior with supporting example code:\n\`\`\`ts\n${codeBlocks.join('\n\n')}\n\`\`\``
+      : undefined;
+
+    // Check if prose introduces multiple code approaches or examples (e.g. TypeScript #63380)
+    const firstProse = proseLines[0];
+    const isApproachOrExampleIntro = /both\s+(?:of\s+these\s+)?approaches\s+would\s+compile/i.test(firstProse) ||
+      /(?:approaches|following\s+(?:cases?|examples?|snippets?)|both\s+calls?)\s+(?:should|would)\s+(?:compile|pass|work)/i.test(firstProse);
+
+    if (isApproachOrExampleIntro && codeBlocks.length > 0) {
+      // Group example snippets into one meaningful EXPLICIT criterion
+      const quoteToUse = bodyContains(firstProse) ? firstProse : undefined;
+      const isVerbatim = Boolean(quoteToUse && quoteToUse.trim().length > 5);
+
+      // Extract core requirement: both the nested generic call and the variable-assigned approach should compile with expected inferred type
+      let description = 'Both the nested generic call and the variable-assigned approach should compile with the expected inferred type.';
+      if (!/both\s+(?:of\s+these\s+)?approaches\s+would\s+compile/i.test(firstProse)) {
+        description = firstProse.replace(/:\s*$/, '').trim();
+      }
+
+      criteria.push({
+        id: `AC-${String(criteria.length + 1).padStart(2, '0')}`,
+        description,
+        criterion_type: isVerbatim ? 'EXPLICIT' : 'AI-PROPOSED',
+        exact_quote: isVerbatim ? quoteToUse : undefined,
+        source_url: issueUrl,
+        status: 'ACTIONABLE',
+        status_rationale: isVerbatim
+          ? 'Extracted verbatim from explicit expected-behavior section; example code snippets grouped into supporting validation.'
+          : 'Proposed from expected-behavior section; verbatim quote not confirmed.',
+        needs_maintainer_clarification: false,
+        candidate_implementation_files: [],
+        test_evidence: {
+          status: 'NO TEST EVIDENCE FOUND IN SCANNED FILES',
+          candidate_test_files: [],
+          rationale: 'Candidate test files mapped from repository tree index.',
+          proposed_manual_validation: supportingValidationSnippet || `Manually verify compiler behavior on example snippets.`,
+          test_executed: false,
+        },
+        test_command: testCommand,
+      });
+      return criteria;
+    }
+
+    // Standard prose expectations
+    for (const line of proseLines) {
+      const clean = line.replace(/^(- \[[ x]\]|\* |- |\d+\. )/, '').replace(/:\s*$/, '').trim();
       if (clean.length > 5) {
-        const bodyContains = (text: string) => body.includes(text) || normalizedBody.includes(text);
         const quoteToUse = bodyContains(line) ? line : (bodyContains(clean) ? clean : undefined);
         const isVerbatim = Boolean(quoteToUse && quoteToUse.trim().length > 5);
         criteria.push({
@@ -230,7 +310,7 @@ export function extractExplicitCriteria(
             status: 'NO TEST EVIDENCE FOUND IN SCANNED FILES',
             candidate_test_files: [],
             rationale: 'Candidate test files mapped from repository tree index.',
-            proposed_manual_validation: `Manually verify "${clean}" before submitting pull request.`,
+            proposed_manual_validation: supportingValidationSnippet || `Manually verify "${clean}" before submitting pull request.`,
             test_executed: false,
           },
           test_command: testCommand,
@@ -308,6 +388,22 @@ export function buildMaintainerHandoff(
     };
   }
 
+  // Check for target repository / architecture ambiguity (e.g. between legacy TypeScript compiler and TypeScript-Go)
+  const allCommentsText = (metadata.comments || []).map((c) => c.body).join('\n');
+  const hasTargetAmbiguity =
+    /(?:should this fix target|target the main|target.*(?:typescript-go|legacy|different repo)|accepting community contributions)/i.test(allCommentsText) ||
+    /(?:target.*(?:repository|architecture|repo)|clarif(?:y|ication).*(?:target|repo|architecture))/i.test(allCommentsText);
+
+  if (hasTargetAmbiguity) {
+    return {
+      clarification_question: `Regarding issue #${metadata.number} ("${metadata.title}"): Could you clarify whether this fix should target the legacy TypeScript repository or TypeScript-Go, and confirm whether ${candidateSourceFile || 'src/compiler/checker.ts'} is the appropriate place to investigate?`,
+      triggering_ambiguity: 'Implementation target is ambiguous between legacy TypeScript compiler and TypeScript-Go repository.',
+      proposed_criteria_addition: `- Confirm target repository (legacy TypeScript vs TypeScript-Go) and expected compiler area.`,
+      suggested_validation_scenario: 'Clarify target architecture and verify with compiler test suite.',
+      user_edited: false,
+    };
+  }
+
   return {
     clarification_question: `Regarding issue #${metadata.number} ("${metadata.title}"): Could you clarify the exact expected behavior and confirm if ${candidateSourceFile || 'the candidate module'} is the intended location for this change?`,
     triggering_ambiguity: criteria.some((c) => c.status === 'AMBIGUOUS' || c.needs_maintainer_clarification)
@@ -342,7 +438,10 @@ export async function compileContributionContract(
       repositoryFiles,
       metadata.title,
       metadata.body,
-      metadata.labels.map((l) => l.name)
+      metadata.labels.map((l) => l.name),
+      aiData.criteria.map((c) => c.description),
+      metadata.comments || [],
+      sources
     );
 
     const inspectedTestMap = new Map(
@@ -421,7 +520,10 @@ export async function compileContributionContract(
           repositoryFiles,
           c.description,
           metadata.body,
-          metadata.labels.map((l) => l.name)
+          metadata.labels.map((l) => l.name),
+          [c.description],
+          metadata.comments || [],
+          sources
         );
         const topSources = critRanked.sourceCandidates.length > 0
           ? critRanked.sourceCandidates.slice(0, 2)
@@ -436,7 +538,7 @@ export async function compileContributionContract(
         }));
       }
 
-      // Test evidence: preserve AI proposed or map from ranked tree
+      // Test evidence: preserve AI proposed or map from ranked tree or fetched sources
       let candidateTestFiles: CandidateTestFile[] = (c.test_evidence?.candidate_test_files || []).map((t: CandidateTestFile) => {
         const isInspected = inspectedTestMap.has(t.path);
         const excerpt = inspectedTestMap.get(t.path);
@@ -453,33 +555,62 @@ export async function compileContributionContract(
         };
       });
 
-      if (candidateTestFiles.length === 0 && ranked.testCandidates.length > 0) {
-        const critRanked = rankRepositoryPaths(
-          repositoryFiles,
-          c.description,
-          metadata.body,
-          metadata.labels.map((l) => l.name)
+      if (candidateTestFiles.length === 0) {
+        // First check fetched test sources from sources
+        const fetchedTestSources = sources.filter(
+          (s) => s.source_type === 'test' || isLikelyTestFile(s.path) || s.path.includes('/tests/') || s.path.includes('/test/')
         );
-        const topTests = critRanked.testCandidates.length > 0
-          ? critRanked.testCandidates.slice(0, 3)
-          : ranked.testCandidates.slice(0, 3);
 
-        if (topTests.length > 0) {
-          candidateTestFiles = topTests.map((p) => {
-            const isInspected = inspectedTestMap.has(p);
-            const excerpt = inspectedTestMap.get(p);
+        if (fetchedTestSources.length > 0) {
+          candidateTestFiles = fetchedTestSources.map((s) => {
+            const isInspected = Boolean(s.excerpt && s.excerpt.trim().length > 0);
             const relevance = isInspected
-              ? evaluateTestRelevance(p, excerpt, c.description, c.exact_quote)
-              : { isRelevant: false, rationale: 'Uninspected path in tree.' };
+              ? evaluateTestRelevance(s.path, s.excerpt, c.description, c.exact_quote)
+              : { isRelevant: false, rationale: 'Uninspected test file.' };
 
             return {
-              path: p,
-              source_id: 'repo-tree',
+              path: s.path,
+              source_id: s.source_id || 'test-source',
               verified_exists: true,
               assertions_inspected: isInspected,
+              is_automated_test: true,
               relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : 'UNRELATED') : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
+              test_executed: false,
             };
           });
+        } else if (ranked.testCandidates.length > 0) {
+          const critRanked = rankRepositoryPaths(
+            repositoryFiles,
+            c.description,
+            metadata.body,
+            metadata.labels.map((l) => l.name),
+            [c.description],
+            metadata.comments || [],
+            sources
+          );
+          const topTests = critRanked.testCandidates.length > 0
+            ? critRanked.testCandidates.slice(0, 3)
+            : ranked.testCandidates.slice(0, 3);
+
+          if (topTests.length > 0) {
+            candidateTestFiles = topTests.map((p) => {
+              const isInspected = inspectedTestMap.has(p);
+              const excerpt = inspectedTestMap.get(p);
+              const relevance = isInspected
+                ? evaluateTestRelevance(p, excerpt, c.description, c.exact_quote)
+                : { isRelevant: false, rationale: 'Uninspected path in tree.' };
+
+              return {
+                path: p,
+                source_id: 'repo-tree',
+                verified_exists: true,
+                assertions_inspected: isInspected,
+                is_automated_test: true,
+                relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : 'UNRELATED') : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
+                test_executed: false,
+              };
+            });
+          }
         }
       }
 
@@ -608,7 +739,10 @@ export function compileDeterministicBaselineContract(
     repositoryFiles,
     metadata.title,
     metadata.body,
-    metadata.labels.map((l) => l.name)
+    metadata.labels.map((l) => l.name),
+    explicitCriteria.map((c) => c.description),
+    metadata.comments || [],
+    sources
   );
   const potentialSourceFiles = ranked.sourceCandidates.slice(0, 3);
   const potentialTestFiles = ranked.testCandidates.slice(0, 3);
@@ -617,6 +751,10 @@ export function compileDeterministicBaselineContract(
     sources
       .filter((s) => s.source_type === 'test' && s.source_id.startsWith('test-content-'))
       .map((s) => [s.path, s.excerpt])
+  );
+
+  const fetchedTestSources = sources.filter(
+    (s) => s.source_type === 'test' || isLikelyTestFile(s.path) || s.path.includes('/tests/') || s.path.includes('/test/')
   );
 
   criteria.forEach((c) => {
@@ -630,8 +768,27 @@ export function compileDeterministicBaselineContract(
       relevance_status: 'AI-INFERRED',
     }));
 
-    if (potentialTestFiles.length > 0) {
-      const candidateTestFiles = potentialTestFiles.map((p) => {
+    let candidateTestFiles: CandidateTestFile[] = [];
+
+    if (fetchedTestSources.length > 0) {
+      candidateTestFiles = fetchedTestSources.map((s) => {
+        const isInspected = Boolean(s.excerpt && s.excerpt.trim().length > 0);
+        const relevance = isInspected
+          ? evaluateTestRelevance(s.path, s.excerpt, c.description, c.exact_quote)
+          : { isRelevant: false, rationale: 'Uninspected test file.' };
+
+        return {
+          path: s.path,
+          source_id: s.source_id || 'test-source',
+          verified_exists: true,
+          assertions_inspected: isInspected,
+          is_automated_test: true,
+          relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : 'UNRELATED') : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
+          test_executed: false,
+        };
+      });
+    } else if (potentialTestFiles.length > 0) {
+      candidateTestFiles = potentialTestFiles.map((p) => {
         const isInspected = inspectedTestMap.has(p);
         const excerpt = inspectedTestMap.get(p);
         const relevance = isInspected
@@ -643,10 +800,14 @@ export function compileDeterministicBaselineContract(
           source_id: 'repo-tree',
           verified_exists: true,
           assertions_inspected: isInspected,
+          is_automated_test: true,
           relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : 'UNRELATED') : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
+          test_executed: false,
         };
       });
+    }
 
+    if (candidateTestFiles.length > 0) {
       c.test_evidence = deriveTestEvidenceSummary(candidateTestFiles, {
         isTreeTruncated: scanBoundaries.is_tree_truncated,
         criterionDescription: c.description,

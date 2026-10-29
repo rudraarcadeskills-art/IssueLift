@@ -996,4 +996,310 @@ describe('BUG 7 — Implementation File Ranking & Fixture Separation', () => {
   });
 });
 
+describe('BUG 8 — Grouping Example Snippets into Meaningful Acceptance Criteria', () => {
+  const TS_63380_BODY = `### TypeScript Version
+
+5.8.0-dev.20250212
+
+### Search Terms
+
+default generic, nested call, generic inference
+
+### Expected Behavior
+
+I would expect that both of these approaches would compile:
+
+\`\`\`ts
+const join = <TDelimiter extends string = ',', TParts extends string[] = string[]>(
+  ...parts: TParts
+): Join<TParts, TDelimiter> => parts.join(',') as any
+
+type Join<THead, TTail> = any
+
+expect(join('Hello', 'World')).toBe('HelloWorld') // bad
+
+const withoutSeparator = join('Hello', 'World')
+expect(withoutSeparator).toBe("HelloWorld") // good
+\`\`\`
+
+### Actual Behavior
+
+Type inference fails for the first approach.`;
+
+  it('groups example snippets into ONE meaningful EXPLICIT criterion for TypeScript issue #63380', () => {
+    const criteria = extractExplicitCriteria(
+      TS_63380_BODY,
+      'https://github.com/microsoft/TypeScript/issues/63380'
+    );
+
+    // Must NOT fragment one expected-behaviour requirement into 4 standalone criteria
+    expect(criteria.length).toBe(1);
+
+    const criterion = criteria[0];
+    expect(criterion.criterion_type).toBe('EXPLICIT');
+    expect(criterion.description).toBe(
+      'Both the nested generic call and the variable-assigned approach should compile with the expected inferred type.'
+    );
+    expect(criterion.exact_quote).toBe('I would expect that both of these approaches would compile:');
+    expect(TS_63380_BODY).toContain(criterion.exact_quote!);
+
+    // Code snippets retained as supporting validation examples, not promoted to independent criteria
+    expect(criterion.test_evidence.proposed_manual_validation).toContain("join('Hello', 'World')");
+    expect(criterion.test_evidence.proposed_manual_validation).toContain('withoutSeparator');
+  });
+
+  it('groups code examples under Expected behavior into a single EXPLICIT criterion for another issue', () => {
+    const DATE_ISSUE_BODY = `### Description
+The date formatting utility behaves unexpectedly when timezone is UTC.
+
+### Expected Behavior
+The date formatting helper should return ISO 8601 strings when timezone is specified:
+
+\`\`\`ts
+formatDate(new Date('2026-01-01'), 'UTC') // => '2026-01-01T00:00:00.000Z'
+\`\`\`
+
+### Steps to Reproduce
+Call formatDate with UTC.`;
+
+    const criteria = extractExplicitCriteria(
+      DATE_ISSUE_BODY,
+      'https://github.com/example/date-utils/issues/42'
+    );
+
+    expect(criteria.length).toBe(1);
+    const criterion = criteria[0];
+    expect(criterion.criterion_type).toBe('EXPLICIT');
+    expect(criterion.description).toBe(
+      'The date formatting helper should return ISO 8601 strings when timezone is specified'
+    );
+    expect(criterion.exact_quote).toBe(
+      'The date formatting helper should return ISO 8601 strings when timezone is specified:'
+    );
+    expect(DATE_ISSUE_BODY).toContain(criterion.exact_quote!);
+
+    // Code example is in proposed manual validation, NOT an independent criterion
+    expect(criterion.test_evidence.proposed_manual_validation).toContain("formatDate(new Date('2026-01-01'), 'UTC')");
+  });
+
+  it('does NOT fabricate explicit criteria when the issue has no explicit expected behavior', () => {
+    const BUG_ONLY_BODY = `### Problem
+The application crashes with segmentation fault on launch.
+
+### Stack Trace
+\`\`\`
+error: crash at 0xdeadbeef
+\`\`\``;
+
+    const criteria = extractExplicitCriteria(
+      BUG_ONLY_BODY,
+      'https://github.com/example/repo/issues/99'
+    );
+
+    expect(criteria.length).toBe(0);
+
+    const contract = compileDeterministicBaselineContract(
+      {
+        url: 'https://github.com/example/repo/issues/99',
+        owner: 'example',
+        repo: 'repo',
+        number: 99,
+        title: 'Crash on launch',
+        body: BUG_ONLY_BODY,
+        state: 'open',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        author: { login: 'user', avatar_url: '', html_url: '' },
+        assignees: [],
+        labels: [{ name: 'bug', color: 'red' }],
+        comments_count: 0,
+        has_linked_pr_signal: false,
+        default_branch: 'main',
+        checked_at: '2026-01-01T00:00:00Z',
+      },
+      [],
+      ['src/index.ts'],
+      mockSetupTruth,
+      mockScanBoundaries
+    );
+
+    // Fallback creates AI-PROPOSED criterion with AMBIGUOUS status, not EXPLICIT
+    expect(contract.criteria.length).toBe(1);
+    expect(contract.criteria[0].criterion_type).toBe('AI-PROPOSED');
+    expect(contract.criteria[0].exact_quote).toBeUndefined();
+    expect(contract.criteria[0].status).toBe('AMBIGUOUS');
+  });
+});
+
+describe('BUG 9 — TypeScript Source Ranking & Test-File Surfacing', () => {
+  const tsIssueMetadata: GitHubIssueMetadata = {
+    url: 'https://github.com/microsoft/TypeScript/issues/63380',
+    owner: 'microsoft',
+    repo: 'TypeScript',
+    number: 63380,
+    title: 'Wrong inference for defaulted generic in nested call',
+    body: `I would expect that both of these approaches would compile:
+
+\`\`\`ts
+const join = <TDelimiter extends string = ',', TParts extends string[] = string[]>(
+  ...parts: TParts
+): Join<TParts, TDelimiter> => parts.join(',') as any
+
+type Join<THead, TTail> = any
+
+expect(join('Hello', 'World')).toBe('HelloWorld') // bad
+
+const withoutSeparator = join('Hello', 'World')
+expect(withoutSeparator).toBe("HelloWorld") // good
+\`\`\``,
+    state: 'open',
+    created_at: '2025-02-12T12:00:00Z',
+    updated_at: '2025-02-13T12:00:00Z',
+    author: { login: 'alex', avatar_url: '', html_url: '' },
+    assignees: [],
+    labels: [
+      { name: 'Bug', color: 'd73a4a' },
+      { name: 'Domain: check: Type Inference', color: 'bfdadc' },
+    ],
+    comments_count: 1,
+    comments: [
+      {
+        author: 'Hamzaa6296',
+        body: 'Should this fix target the main `microsoft/TypeScript` repo, or `microsoft/typescript-go`? From my trace, the problem relates to `inferTypeArguments` inside `checker.ts`.',
+        created_at: '2025-02-13T00:00:00Z',
+        html_url: '',
+      },
+    ],
+    has_linked_pr_signal: false,
+    default_branch: 'main',
+    checked_at: '2025-02-13T00:00:00Z',
+  };
+
+  const tsRepoFiles = [
+    'src/compiler/checker.ts',
+    'src/compiler/parser.ts',
+    'src/compiler/binder.ts',
+    'src/compiler/types.ts',
+    'packages/typescript/src/api/fsCallbacks.ts',
+    'packages/typescript/src/api/prepareCompilerOptions.generated.ts',
+    'package.json',
+  ];
+
+  it('ranks src/compiler/checker.ts above fsCallbacks.ts and prepareCompilerOptions for issue #63380', () => {
+    const ranked = rankRepositoryPaths(
+      tsRepoFiles,
+      tsIssueMetadata.title,
+      tsIssueMetadata.body,
+      tsIssueMetadata.labels.map((l) => l.name),
+      ['Both the nested generic call and the variable-assigned approach should compile with the expected inferred type.'],
+      tsIssueMetadata.comments || []
+    );
+
+    expect(ranked.sourceCandidates.length).toBeGreaterThan(0);
+    expect(ranked.sourceCandidates[0]).toBe('src/compiler/checker.ts');
+
+    // fsCallbacks.ts and prepareCompilerOptions.generated.ts should not be top candidates
+    expect(ranked.sourceCandidates[0]).not.toBe('packages/typescript/src/api/fsCallbacks.ts');
+    expect(ranked.sourceCandidates[0]).not.toBe('packages/typescript/src/api/prepareCompilerOptions.generated.ts');
+  });
+
+  it('does NOT hardcode checker.ts for all TypeScript issues and ranks parser.ts when appropriate', () => {
+    const parserIssueMetadata: GitHubIssueMetadata = {
+      ...tsIssueMetadata,
+      number: 63400,
+      title: 'Syntax error recovery in decorator expression parser',
+      body: 'Parser fails to recover after syntax error inside decorator.',
+      labels: [{ name: 'Bug', color: 'd73a4a' }, { name: 'Domain: Parser', color: 'bfdadc' }],
+      comments: [{ author: 'user', body: 'Investigating parser recovery in parser.ts', created_at: '', html_url: '' }],
+    };
+
+    const ranked = rankRepositoryPaths(
+      tsRepoFiles,
+      parserIssueMetadata.title,
+      parserIssueMetadata.body,
+      parserIssueMetadata.labels.map((l) => l.name),
+      ['Parser should recover after syntax error'],
+      parserIssueMetadata.comments || []
+    );
+
+    expect(ranked.sourceCandidates[0]).toBe('src/compiler/parser.ts');
+  });
+
+  it('preserves CLARIFY FIRST when target repository is ambiguous between legacy TypeScript and TypeScript-Go', () => {
+    const contract = compileDeterministicBaselineContract(
+      tsIssueMetadata,
+      [],
+      tsRepoFiles,
+      mockSetupTruth,
+      mockScanBoundaries
+    );
+
+    expect(contract.readiness_gate.verdict).toBe('CLARIFY FIRST');
+    expect(
+      contract.readiness_gate.reasons.some((r) =>
+        r.toLowerCase().includes('typescript-go') || r.toLowerCase().includes('legacy')
+      )
+    ).toBe(true);
+    expect(contract.maintainer_handoff.clarification_question).toContain('TypeScript-Go');
+  });
+
+  it('surfaces inspected test files under tsc/internal/fourslash/tests/ when tree is truncated and retains SCAN INCOMPLETE / UNKNOWN', () => {
+    const truncatedScanBoundaries: ScanBoundaries = {
+      total_files_in_tree: 50000,
+      scanned_files_count: 500,
+      is_tree_truncated: true,
+      checked_at: '2026-03-01T00:00:00Z',
+    };
+
+    const testSources: SourceEvidence[] = [
+      {
+        source_id: 'test-content-fourslash-1',
+        canonical_url: 'https://github.com/microsoft/TypeScript/blob/main/tsc/internal/fourslash/tests/genericInferenceNested.ts',
+        path: 'tsc/internal/fourslash/tests/genericInferenceNested.ts',
+        source_type: 'test',
+        excerpt: `// FourSlash test for generic type inference in nested call
+/// <reference path="../fourslash.ts" />
+const join = <TDelimiter extends string = ',', TParts extends string[] = string[]>(...parts: TParts): any => {};
+// verify inference and type resolution
+verify.quickInfoAt("1", "string");`,
+        verified_exists: true,
+        verification_status: 'VERIFIED',
+      },
+    ];
+
+    // Truncated repo tree that did not reach test directories
+    const truncatedRepoFiles = [
+      'src/compiler/checker.ts',
+      'src/compiler/types.ts',
+      'package.json',
+    ];
+
+    const contract = compileDeterministicBaselineContract(
+      tsIssueMetadata,
+      testSources,
+      truncatedRepoFiles,
+      mockSetupTruth,
+      truncatedScanBoundaries
+    );
+
+    expect(contract.criteria.length).toBe(1);
+    const criterion = contract.criteria[0];
+
+    // Must surface the inspected test file instead of showing an empty list
+    expect(criterion.test_evidence.candidate_test_files.length).toBeGreaterThan(0);
+    const candidateTest = criterion.test_evidence.candidate_test_files.find(
+      (t) => t.path === 'tsc/internal/fourslash/tests/genericInferenceNested.ts'
+    );
+    expect(candidateTest).toBeDefined();
+    expect(candidateTest?.assertions_inspected).toBe(true);
+    expect(candidateTest?.relevance_verdict).toBe('RELEVANT');
+    expect(candidateTest?.test_executed).toBe(false);
+
+    // Tree truncation honestly reported as SCAN INCOMPLETE / UNKNOWN
+    expect(criterion.test_evidence.status).toBe('SCAN INCOMPLETE / UNKNOWN');
+    expect(criterion.test_evidence.test_executed).toBe(false);
+    expect(criterion.test_evidence.rationale).toContain('truncated');
+  });
+});
+
 
