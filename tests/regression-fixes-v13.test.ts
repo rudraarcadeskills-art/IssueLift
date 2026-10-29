@@ -1302,4 +1302,292 @@ verify.quickInfoAt("1", "string");`,
   });
 });
 
+describe('BUG 10 — Test Evidence Relevance & Provenance for TypeScript Issue #63380', () => {
+  const tsCriterionDescription =
+    'Both the nested generic call and the variable-assigned approach should compile with the expected inferred type.';
+  const tsExactQuote = 'I would expect that both of these approaches would compile:';
+
+  const tsMetadata: GitHubIssueMetadata = {
+    url: 'https://github.com/microsoft/TypeScript/issues/63380',
+    owner: 'microsoft',
+    repo: 'TypeScript',
+    number: 63380,
+    title: 'Wrong inference for defaulted generic in nested call',
+    body: `### Expected Behavior\n\nI would expect that both of these approaches would compile:\n\n\`\`\`ts\nconst join = <TDelimiter extends string = ',', TParts extends string[] = string[]>(\n  ...parts: TParts\n): Join<TParts, TDelimiter> => parts.join(',') as any\n\nexpect(join('Hello', 'World')).toBe('HelloWorld')\n\`\`\``,
+    state: 'open',
+    created_at: '2025-02-12T12:00:00Z',
+    updated_at: '2025-02-13T12:00:00Z',
+    author: { login: 'alex', avatar_url: '', html_url: '' },
+    assignees: [],
+    labels: [{ name: 'Bug', color: 'd73a4a' }],
+    comments_count: 0,
+    has_linked_pr_signal: false,
+    default_branch: 'main',
+    checked_at: '2025-02-13T12:00:00Z',
+  };
+
+  it('treats generic optional value parameters as RELATED/UNCONFIRMED false positive for issue #63380', () => {
+    const testPath = 'tests/cases/compiler/genericOptionalValueParameters.ts';
+    const content = `
+      function foo<T = string>(x?: T) { return x; }
+      foo();
+      foo('hello');
+      expect(foo()).toBeUndefined();
+    `;
+
+    const relevance = evaluateTestRelevance(testPath, content, tsCriterionDescription, tsExactQuote);
+
+    // Must NOT be labeled RELEVANT
+    expect(relevance.isRelevant).toBe(false);
+    expect(relevance.verdict).toBe('UNCONFIRMED');
+    expect(relevance.rationale).toContain('generic optional value parameters');
+    expect(relevance.rationale).toContain('RELATED/UNCONFIRMED');
+  });
+
+  it('treats generic constructor signature-help as RELATED/UNCONFIRMED false positive for issue #63380', () => {
+    const testPath = 'tests/cases/fourslash/genericConstructorSignatureHelp.ts';
+    const content = `
+      /// <reference path="fourslash.ts" />
+      class Box<T = number> {
+        constructor(public val?: T) {}
+      }
+      new Box/*1*/();
+      verify.signatureHelpPresent();
+    `;
+
+    const relevance = evaluateTestRelevance(testPath, content, tsCriterionDescription, tsExactQuote);
+
+    // Must NOT be labeled RELEVANT
+    expect(relevance.isRelevant).toBe(false);
+    expect(relevance.verdict).toBe('UNCONFIRMED');
+    expect(relevance.rationale).toContain('generic constructor signature-help');
+    expect(relevance.rationale).toContain('RELATED/UNCONFIRMED');
+  });
+
+  it('treats generic call signatures as RELATED/UNCONFIRMED false positive for issue #63380', () => {
+    const testPath = 'tests/cases/compiler/genericCallSignatures.ts';
+    const content = `
+      interface Callable<T> {
+        (arg: T): T;
+      }
+      declare const c: Callable<number>;
+      expect(c(42)).toBe(42);
+    `;
+
+    const relevance = evaluateTestRelevance(testPath, content, tsCriterionDescription, tsExactQuote);
+
+    // Must NOT be labeled RELEVANT
+    expect(relevance.isRelevant).toBe(false);
+    expect(relevance.verdict).toBe('UNCONFIRMED');
+    expect(relevance.rationale).toContain('generic call signatures');
+    expect(relevance.rationale).toContain('RELATED/UNCONFIRMED');
+  });
+
+  it('never uses filename or keyword similarity alone as proof of relevance', () => {
+    const candidatePath = 'tests/cases/compiler/nestedGenericCallInference.ts';
+
+    // 1. Uninspected / unavailable content returns UNKNOWN
+    const uninspectedRelevance = evaluateTestRelevance(
+      candidatePath,
+      undefined,
+      tsCriterionDescription,
+      tsExactQuote
+    );
+    expect(uninspectedRelevance.isRelevant).toBe(false);
+    expect(uninspectedRelevance.verdict).toBe('UNKNOWN');
+    expect(uninspectedRelevance.rationale).toContain('not fetched or inspected');
+
+    // 2. Inspected content without assertions or relevant testing returns UNRELATED
+    const unrelatedContent = `
+      // nested generic call inference file
+      const x = 1;
+    `;
+    const unrelatedRelevance = evaluateTestRelevance(
+      candidatePath,
+      unrelatedContent,
+      tsCriterionDescription,
+      tsExactQuote
+    );
+    expect(unrelatedRelevance.isRelevant).toBe(false);
+    expect(unrelatedRelevance.verdict).toBe('UNRELATED');
+  });
+
+  it('labels test RELEVANT only when inspected content meaningfully tests nested call inference with omitted defaulted generic', () => {
+    const testPath = 'tests/cases/compiler/nestedDefaultedGenericInference.ts';
+    const relevantContent = `
+      // Meaningful test for nested function-call inference with omitted defaulted generic parameter
+      /// <reference path="fourslash.ts" />
+      const join = <TDelimiter extends string = ',', TParts extends string[] = string[]>(
+        ...parts: TParts
+      ): Join<TParts, TDelimiter> => parts.join(',') as any;
+      type Join<THead, TTail> = any;
+      expect(join('Hello', 'World')).toBe('HelloWorld');
+    `;
+
+    const relevance = evaluateTestRelevance(testPath, relevantContent, tsCriterionDescription, tsExactQuote);
+
+    expect(relevance.isRelevant).toBe(true);
+    expect(relevance.verdict).toBe('CONFIRMED_RELEVANT');
+    expect(relevance.rationale).toContain('meaningfully verifies nested function-call inference');
+  });
+
+  it('ensures assertions_inspected: true is emitted ONLY when source contents were actually fetched and inspected', () => {
+    // Repo tree has test files, but sources contains only uninspected tree references
+    const treeOnlySources: SourceEvidence[] = [
+      {
+        source_id: 'test-file-1',
+        canonical_url: 'https://github.com/microsoft/TypeScript/blob/main/tests/cases/compiler/genericCallSignatures.ts',
+        path: 'tests/cases/compiler/genericCallSignatures.ts',
+        source_type: 'test',
+        excerpt: 'Candidate test file identified in repository tree (tests/cases/compiler/genericCallSignatures.ts)',
+        verified_exists: true,
+        verification_status: 'VERIFIED',
+      },
+    ];
+
+    const repoFiles = [
+      'src/compiler/checker.ts',
+      'tests/cases/compiler/genericCallSignatures.ts',
+      'package.json',
+    ];
+
+    const boundaries: ScanBoundaries = {
+      total_files_in_tree: 50,
+      scanned_files_count: 3,
+      is_tree_truncated: false,
+      checked_at: '2026-03-01T00:00:00Z',
+    };
+
+    const setupTruth: SetupTruth = {
+      has_readme: false,
+      has_contributing: false,
+      notes: '',
+    };
+
+    const contract = compileDeterministicBaselineContract(
+      tsMetadata,
+      treeOnlySources,
+      repoFiles,
+      setupTruth,
+      boundaries
+    );
+
+    const criterion = contract.criteria[0];
+    const candidate = criterion.test_evidence.candidate_test_files[0];
+
+    // Must be uninspected because source content was not fetched
+    expect(candidate.assertions_inspected).toBe(false);
+    expect(candidate.relevance_verdict).toBe('UNKNOWN');
+    expect(criterion.test_evidence.assertions_inspected).toBe(false);
+    expect(criterion.test_evidence.status).toBe('POSSIBLE TEST CANDIDATE');
+
+    // UI summary reflects uninspected state
+    const summary = formatCandidateTestFileSummary(candidate);
+    expect(summary.inspectionText).toBe('Inspected: No (content unavailable)');
+    expect(summary.executionText).toBe('Executed: No (untrusted code is never executed)');
+  });
+
+  it('ensures exported source inventory, candidate records, Markdown, and JSON agree', () => {
+    const testSources: SourceEvidence[] = [
+      {
+        source_id: 'test-content-1',
+        canonical_url: 'https://github.com/microsoft/TypeScript/blob/main/tests/cases/compiler/genericOptionalValueParameters.ts',
+        path: 'tests/cases/compiler/genericOptionalValueParameters.ts',
+        source_type: 'test',
+        excerpt: `function foo<T = string>(x?: T) { return x; }\nfoo();\nexpect(foo()).toBeUndefined();`,
+        verified_exists: true,
+        verification_status: 'VERIFIED',
+      },
+    ];
+
+    const repoFiles = [
+      'src/compiler/checker.ts',
+      'tests/cases/compiler/genericOptionalValueParameters.ts',
+      'package.json',
+    ];
+
+    const boundaries: ScanBoundaries = {
+      total_files_in_tree: 50,
+      scanned_files_count: 3,
+      is_tree_truncated: false,
+      checked_at: '2026-03-01T00:00:00Z',
+    };
+
+    const setupTruth: SetupTruth = {
+      has_readme: false,
+      has_contributing: false,
+      notes: '',
+    };
+
+    const contract = compileDeterministicBaselineContract(
+      tsMetadata,
+      testSources,
+      repoFiles,
+      setupTruth,
+      boundaries
+    );
+
+    const criterion = contract.criteria[0];
+    const candidate = criterion.test_evidence.candidate_test_files[0];
+
+    // Candidate was fetched and inspected
+    expect(candidate.assertions_inspected).toBe(true);
+    expect(candidate.relevance_verdict).toBe('UNCONFIRMED');
+    expect(candidate.test_executed).toBe(false);
+
+    // Formatted summary
+    const formatted = formatCandidateTestFileSummary(candidate);
+    expect(formatted.badge).toBe('[Related / Unconfirmed Test Candidate]');
+    expect(formatted.inspectionText).toBe('Inspected: Yes');
+    expect(formatted.executionText).toBe('Executed: No (untrusted code is never executed)');
+
+    // Markdown export agrees
+    const markdown = generateProofBundleMarkdown(contract);
+    expect(markdown).toContain('`tests/cases/compiler/genericOptionalValueParameters.ts` [Related / Unconfirmed Test Candidate] (Inspected: Yes, Executed: No (untrusted code is never executed))');
+    expect(markdown).toContain('Test execution has NOT occurred');
+
+    // JSON export agrees
+    const jsonStr = generateProofBundleJson(contract);
+    const parsed = JSON.parse(jsonStr);
+    expect(parsed.criteria[0].test_evidence.assertions_inspected).toBe(true);
+    expect(parsed.criteria[0].test_evidence.candidate_test_files[0].assertions_inspected).toBe(true);
+    expect(parsed.criteria[0].test_evidence.candidate_test_files[0].relevance_verdict).toBe('UNCONFIRMED');
+    expect(parsed.criteria[0].test_evidence.candidate_test_files[0].test_executed).toBe(false);
+    expect(parsed.sources[0].source_id).toBe('test-content-1');
+  });
+
+  it('keeps SCAN INCOMPLETE / UNKNOWN when repository tree is truncated and does not invent missing files or claim execution', () => {
+    const truncatedScanBoundaries: ScanBoundaries = {
+      total_files_in_tree: 50000,
+      scanned_files_count: 500,
+      is_tree_truncated: true,
+      checked_at: '2026-03-01T00:00:00Z',
+    };
+
+    // Sources contains only non-test or uninspected files
+    const repoFiles = ['src/compiler/checker.ts', 'src/compiler/parser.ts', 'package.json'];
+    const setupTruth: SetupTruth = {
+      has_readme: false,
+      has_contributing: false,
+      notes: '',
+    };
+
+    const contract = compileDeterministicBaselineContract(
+      tsMetadata,
+      [],
+      repoFiles,
+      setupTruth,
+      truncatedScanBoundaries
+    );
+
+    const criterion = contract.criteria[0];
+    expect(criterion.test_evidence.status).toBe('SCAN INCOMPLETE / UNKNOWN');
+    expect(criterion.test_evidence.test_executed).toBe(false);
+    expect(criterion.test_evidence.rationale).toContain('truncated');
+    // Does not invent phantom test files
+    expect(criterion.test_evidence.candidate_test_files.length).toBe(0);
+  });
+});
+
+
 

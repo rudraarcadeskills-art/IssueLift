@@ -16,6 +16,7 @@ export function formatCandidateTestFileSummary(t: CandidateTestFile): {
   const isFixture = t.is_automated_test === false;
   const isRelevant = t.relevance_verdict === 'CONFIRMED_RELEVANT' || t.relevance_verdict === 'RELEVANT';
   const isUnrelated = t.relevance_verdict === 'UNRELATED';
+  const isUnconfirmed = t.relevance_verdict === 'UNCONFIRMED' || t.relevance_verdict === 'RELATED';
 
   let badge = '[Automated Test Candidate]';
   let badgeType: 'verified' | 'unrelated' | 'fixture' | 'candidate' = 'candidate';
@@ -29,6 +30,9 @@ export function formatCandidateTestFileSummary(t: CandidateTestFile): {
   } else if (isUnrelated) {
     badge = '[Unrelated Test Suite]';
     badgeType = 'unrelated';
+  } else if (isUnconfirmed) {
+    badge = '[Related / Unconfirmed Test Candidate]';
+    badgeType = 'candidate';
   }
 
   const inspectionText = t.assertions_inspected
@@ -71,12 +75,12 @@ export function deriveTestEvidenceSummary(
         (t) => t.is_automated_test && t.assertions_inspected && (t.relevance_verdict === 'CONFIRMED_RELEVANT' || t.relevance_verdict === 'RELEVANT')
       );
       const unrelated = normalizedCandidates.filter(
-        (t) => t.is_automated_test && t.assertions_inspected && t.relevance_verdict === 'UNRELATED'
+        (t) => t.is_automated_test && t.assertions_inspected && (t.relevance_verdict === 'UNRELATED' || t.relevance_verdict === 'UNCONFIRMED' || t.relevance_verdict === 'RELATED')
       );
       if (relevant.length > 0 && unrelated.length > 0) {
         const relPaths = relevant.map((t) => t.path).join(', ');
         const unrelPaths = unrelated.map((t) => t.path).join(', ');
-        rationale = `Repository tree was truncated by GitHub API size limits; test evidence scan is incomplete. Inspected test file(s) (${relPaths}) verified relevant to criterion from content, while additional candidate(s) (${unrelPaths}) were unrelated. Exhaustive test coverage cannot be confirmed across full repository. Tests were NOT executed (security guardrail).`;
+        rationale = `Repository tree was truncated by GitHub API size limits; test evidence scan is incomplete. Inspected test file(s) (${relPaths}) verified relevant to criterion from content, while additional candidate(s) (${unrelPaths}) were unconfirmed or unrelated. Exhaustive test coverage cannot be confirmed across full repository. Tests were NOT executed (security guardrail).`;
       } else if (relevant.length > 0) {
         const relPaths = relevant.map((t) => t.path).join(', ');
         rationale = `Repository tree was truncated by GitHub API size limits; test evidence scan is incomplete. Inspected test file(s) (${relPaths}) verified relevant to criterion from content, but exhaustive test coverage cannot be confirmed across full repository. Tests were NOT executed (security guardrail).`;
@@ -102,6 +106,9 @@ export function deriveTestEvidenceSummary(
     const unrelatedInspected = normalizedCandidates.filter(
       (t) => t.is_automated_test && t.assertions_inspected && t.relevance_verdict === 'UNRELATED'
     );
+    const unconfirmedInspected = normalizedCandidates.filter(
+      (t) => t.is_automated_test && t.assertions_inspected && (t.relevance_verdict === 'UNCONFIRMED' || t.relevance_verdict === 'RELATED' || t.relevance_verdict === 'POTENTIALLY_RELEVANT')
+    );
     const uninspected = normalizedCandidates.filter(
       (t) => t.is_automated_test && !t.assertions_inspected
     );
@@ -110,12 +117,16 @@ export function deriveTestEvidenceSummary(
     if (relevantInspected.length > 0) {
       status = 'TEST EVIDENCE FOUND';
       const relPaths = relevantInspected.map((t) => t.path).join(', ');
-      if (unrelatedInspected.length > 0) {
-        const unrelPaths = unrelatedInspected.map((t) => t.path).join(', ');
-        rationale = `Located relevant automated test file(s) in repository tree (${relPaths}). Test assertions inspected in bounded scan and verified relevant to criterion. Additional inspected candidate(s) (${unrelPaths}) were unrelated. Candidate tests were inspected but NOT executed (security guardrail; untrusted code is never run).`;
+      if (unrelatedInspected.length > 0 || unconfirmedInspected.length > 0) {
+        const otherPaths = [...unrelatedInspected, ...unconfirmedInspected].map((t) => t.path).join(', ');
+        rationale = `Located relevant automated test file(s) in repository tree (${relPaths}). Test assertions inspected in bounded scan and verified relevant to criterion. Additional inspected candidate(s) (${otherPaths}) were unconfirmed or unrelated. Candidate tests were inspected but NOT executed (security guardrail; untrusted code is never run).`;
       } else {
         rationale = `Located relevant automated test file(s) in repository tree (${relPaths}). Test assertions inspected in bounded scan and verified relevant to acceptance criterion. Candidate tests were inspected but NOT executed (security guardrail; untrusted code is never run).`;
       }
+    } else if (unconfirmedInspected.length > 0) {
+      status = 'POSSIBLE TEST CANDIDATE';
+      const uncPaths = unconfirmedInspected.map((t) => t.path).join(', ');
+      rationale = `Candidate test path(s) found in repository (${uncPaths}). Inspected test assertions cover related constructs but do not verify the specific requirements of this acceptance criterion. Tests were NOT executed.`;
     } else if (unrelatedInspected.length > 0 && uninspected.length === 0) {
       status = 'NO TEST EVIDENCE FOUND IN SCANNED FILES';
       const unrelPaths = unrelatedInspected.map((t) => t.path).join(', ');

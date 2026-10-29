@@ -12,7 +12,7 @@ import {
   TestEvidenceStatus,
 } from './types';
 import { deriveTestEvidenceSummary } from './test-evidence';
-import { evaluateTestRelevance, isLikelyTestFile } from './github';
+import { evaluateTestRelevance, isInspectedTestSource, isLikelyTestFile } from './github';
 
 export interface ClaimGateValidationResult {
   validatedCriteria: AcceptanceCriterion[];
@@ -174,12 +174,38 @@ export function runDeterministicClaimGate(
       }
 
       const isAutomatedTest = tFile.is_automated_test !== false;
-      const relevance = tFile.relevance_verdict || (isAutomatedTest ? 'POTENTIALLY_RELEVANT' : 'UNRELATED');
+      const inspectedSource = sources.find(
+        (s) => s.path === tFile.path && isInspectedTestSource(s)
+      );
+      const hasInspectedSourcesInPack = sources.some(isInspectedTestSource);
+      const isActuallyInspected = hasInspectedSourcesInPack
+        ? Boolean(inspectedSource)
+        : Boolean(tFile.assertions_inspected);
+
+      let relevance = tFile.relevance_verdict;
+      if (inspectedSource) {
+        const evaluated = evaluateTestRelevance(
+          tFile.path,
+          inspectedSource.excerpt,
+          criterion.description,
+          criterion.exact_quote
+        );
+        relevance = evaluated.isRelevant
+          ? (tFile.relevance_verdict === 'CONFIRMED_RELEVANT' ? 'CONFIRMED_RELEVANT' : 'RELEVANT')
+          : evaluated.verdict;
+      } else if (!isActuallyInspected) {
+        if (tFile.assertions_inspected) {
+          warnings.push(
+            `Claim Gate: Demoted assertions_inspected for uninspected test "${tFile.path}" in ${id}.`
+          );
+        }
+        relevance = isAutomatedTest ? 'UNKNOWN' : 'UNRELATED';
+      }
 
       validatedTestFiles.push({
         ...tFile,
         verified_exists: existsInTree || existsInSources,
-        assertions_inspected: Boolean(tFile.assertions_inspected),
+        assertions_inspected: isActuallyInspected,
         is_automated_test: isAutomatedTest,
         relevance_verdict: relevance,
         test_executed: false,
@@ -188,22 +214,22 @@ export function runDeterministicClaimGate(
 
     // Reconcile fetched test-file sources if validated candidate list is empty
     if (validatedTestFiles.length === 0) {
-      const fetchedTestSources = sources.filter(
-        (s) => s.source_type === 'test' || isLikelyTestFile(s.path) || s.path.includes('/tests/') || s.path.includes('/test/')
-      );
+      const fetchedTestSources = sources.filter(isInspectedTestSource);
       for (const tSource of fetchedTestSources) {
-        const isInspected = Boolean(tSource.excerpt && tSource.excerpt.trim().length > 0);
-        const relevance = isInspected
-          ? evaluateTestRelevance(tSource.path, tSource.excerpt, criterion.description, criterion.exact_quote)
-          : { isRelevant: false, rationale: 'Uninspected test source.' };
+        const relevance = evaluateTestRelevance(
+          tSource.path,
+          tSource.excerpt,
+          criterion.description,
+          criterion.exact_quote
+        );
 
         validatedTestFiles.push({
           path: tSource.path,
           source_id: tSource.source_id,
           verified_exists: true,
-          assertions_inspected: isInspected,
+          assertions_inspected: true,
           is_automated_test: true,
-          relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : 'UNRELATED') : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
+          relevance_verdict: (relevance.isRelevant ? 'RELEVANT' : relevance.verdict) as CandidateTestFile['relevance_verdict'],
           test_executed: false,
         });
       }

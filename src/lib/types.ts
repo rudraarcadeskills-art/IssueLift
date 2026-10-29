@@ -45,13 +45,22 @@ export interface CandidateFile {
   relevance_status: 'AI-INFERRED' | 'VERIFIED' | 'UNKNOWN';
 }
 
+export type RelevanceVerdict =
+  | 'CONFIRMED_RELEVANT'
+  | 'POTENTIALLY_RELEVANT'
+  | 'RELEVANT'
+  | 'RELATED'
+  | 'UNCONFIRMED'
+  | 'UNRELATED'
+  | 'UNKNOWN';
+
 export interface CandidateTestFile {
   path: string;
   source_id: string;
   verified_exists: boolean;
   assertions_inspected?: boolean;
   is_automated_test?: boolean;
-  relevance_verdict?: 'CONFIRMED_RELEVANT' | 'POTENTIALLY_RELEVANT' | 'RELEVANT' | 'UNRELATED' | 'UNKNOWN';
+  relevance_verdict?: RelevanceVerdict;
   relevance_rationale?: string;
   test_runner_detected?: string;
   test_executed?: boolean;

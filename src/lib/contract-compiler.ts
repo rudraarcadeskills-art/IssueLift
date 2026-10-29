@@ -15,6 +15,7 @@ import { runDeterministicClaimGate } from './claim-gate';
 import {
   evaluateTestRelevance,
   extractReproductionEnvironment,
+  isInspectedTestSource,
   isLikelyTestFile,
   isTestOrFixturePath,
   rankRepositoryPaths,
@@ -446,7 +447,7 @@ export async function compileContributionContract(
 
     const inspectedTestMap = new Map(
       sources
-        .filter((s) => s.source_type === 'test' && s.source_id.startsWith('test-content-'))
+        .filter(isInspectedTestSource)
         .map((s) => [s.path, s.excerpt])
     );
 
@@ -544,37 +545,32 @@ export async function compileContributionContract(
         const excerpt = inspectedTestMap.get(t.path);
         const relevance = isInspected
           ? evaluateTestRelevance(t.path, excerpt, c.description, c.exact_quote)
-          : { isRelevant: false, rationale: 'Uninspected path in tree.' };
+          : { isRelevant: false, verdict: 'UNKNOWN' as const, rationale: 'Uninspected path in tree.' };
 
         return {
           path: t.path,
           source_id: t.source_id,
           verified_exists: false,
           assertions_inspected: isInspected,
-          relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : 'UNRELATED') : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
+          relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : relevance.verdict) : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
         };
       });
 
       if (candidateTestFiles.length === 0) {
         // First check fetched test sources from sources
-        const fetchedTestSources = sources.filter(
-          (s) => s.source_type === 'test' || isLikelyTestFile(s.path) || s.path.includes('/tests/') || s.path.includes('/test/')
-        );
+        const fetchedTestSources = sources.filter(isInspectedTestSource);
 
         if (fetchedTestSources.length > 0) {
           candidateTestFiles = fetchedTestSources.map((s) => {
-            const isInspected = Boolean(s.excerpt && s.excerpt.trim().length > 0);
-            const relevance = isInspected
-              ? evaluateTestRelevance(s.path, s.excerpt, c.description, c.exact_quote)
-              : { isRelevant: false, rationale: 'Uninspected test file.' };
+            const relevance = evaluateTestRelevance(s.path, s.excerpt, c.description, c.exact_quote);
 
             return {
               path: s.path,
               source_id: s.source_id || 'test-source',
               verified_exists: true,
-              assertions_inspected: isInspected,
+              assertions_inspected: true,
               is_automated_test: true,
-              relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : 'UNRELATED') : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
+              relevance_verdict: (relevance.isRelevant ? 'RELEVANT' : relevance.verdict) as CandidateTestFile['relevance_verdict'],
               test_executed: false,
             };
           });
@@ -598,7 +594,7 @@ export async function compileContributionContract(
               const excerpt = inspectedTestMap.get(p);
               const relevance = isInspected
                 ? evaluateTestRelevance(p, excerpt, c.description, c.exact_quote)
-                : { isRelevant: false, rationale: 'Uninspected path in tree.' };
+                : { isRelevant: false, verdict: 'UNKNOWN' as const, rationale: 'Uninspected path in tree.' };
 
               return {
                 path: p,
@@ -606,7 +602,7 @@ export async function compileContributionContract(
                 verified_exists: true,
                 assertions_inspected: isInspected,
                 is_automated_test: true,
-                relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : 'UNRELATED') : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
+                relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : relevance.verdict) : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
                 test_executed: false,
               };
             });
@@ -749,13 +745,11 @@ export function compileDeterministicBaselineContract(
 
   const inspectedTestMap = new Map(
     sources
-      .filter((s) => s.source_type === 'test' && s.source_id.startsWith('test-content-'))
+      .filter(isInspectedTestSource)
       .map((s) => [s.path, s.excerpt])
   );
 
-  const fetchedTestSources = sources.filter(
-    (s) => s.source_type === 'test' || isLikelyTestFile(s.path) || s.path.includes('/tests/') || s.path.includes('/test/')
-  );
+  const fetchedTestSources = sources.filter(isInspectedTestSource);
 
   criteria.forEach((c) => {
     c.candidate_implementation_files = potentialSourceFiles.map((p) => ({
@@ -772,18 +766,15 @@ export function compileDeterministicBaselineContract(
 
     if (fetchedTestSources.length > 0) {
       candidateTestFiles = fetchedTestSources.map((s) => {
-        const isInspected = Boolean(s.excerpt && s.excerpt.trim().length > 0);
-        const relevance = isInspected
-          ? evaluateTestRelevance(s.path, s.excerpt, c.description, c.exact_quote)
-          : { isRelevant: false, rationale: 'Uninspected test file.' };
+        const relevance = evaluateTestRelevance(s.path, s.excerpt, c.description, c.exact_quote);
 
         return {
           path: s.path,
           source_id: s.source_id || 'test-source',
           verified_exists: true,
-          assertions_inspected: isInspected,
+          assertions_inspected: true,
           is_automated_test: true,
-          relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : 'UNRELATED') : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
+          relevance_verdict: (relevance.isRelevant ? 'RELEVANT' : relevance.verdict) as CandidateTestFile['relevance_verdict'],
           test_executed: false,
         };
       });
@@ -793,7 +784,7 @@ export function compileDeterministicBaselineContract(
         const excerpt = inspectedTestMap.get(p);
         const relevance = isInspected
           ? evaluateTestRelevance(p, excerpt, c.description, c.exact_quote)
-          : { isRelevant: false, rationale: 'Uninspected path in tree.' };
+          : { isRelevant: false, verdict: 'UNKNOWN' as const, rationale: 'Uninspected path in tree.' };
 
         return {
           path: p,
@@ -801,7 +792,7 @@ export function compileDeterministicBaselineContract(
           verified_exists: true,
           assertions_inspected: isInspected,
           is_automated_test: true,
-          relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : 'UNRELATED') : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
+          relevance_verdict: (isInspected ? (relevance.isRelevant ? 'RELEVANT' : relevance.verdict) : 'UNKNOWN') as CandidateTestFile['relevance_verdict'],
           test_executed: false,
         };
       });
